@@ -1,0 +1,11 @@
+.ipynb_checkpoints/
+*.zip
+*.tar.gz
+*.csv
+*.h5
+*.pth
+*.ckpt
+*.jpg
+*.png
+data/train/
+data/test/
