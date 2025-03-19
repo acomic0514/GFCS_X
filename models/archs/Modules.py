@@ -4,6 +4,8 @@ import torch.nn.functional as F
 from einops import rearrange
 import models.archs.Norms as Norms
 
+
+"""Restomer: Efficient Transformer for High-Resolution Image Restoration"""
 ##########################################################################
 # Multi-DConv Head Transposed Self-Attention (MDTA)
 class MDTA(nn.Module):
@@ -124,4 +126,148 @@ class TransformerBlock(nn.Module):
         x = x + self.MDTA(self.norm1(x))
         x = x + self.GDFN(self.norm2(x))
 
+        return x
+    
+    
+"""Image De-Raining Transformer (WTM+STM)"""
+##########################################################################
+# 窗口切割
+def window_partition(x, window_size):
+    """
+    x: (B, H, W, C)
+    window_size: 窗口大小
+    return: (B*num_windows, window_size*window_size, C), (pad_h, pad_w)
+    """
+    B, H, W, C = x.shape
+    pad_h = (window_size - H % window_size) % window_size
+    pad_w = (window_size - W % window_size) % window_size
+
+    # 補零
+    x = F.pad(x, (0, 0, 0, pad_w, 0, pad_h))  # 只對 H 和 W 補零
+    H_pad, W_pad = x.shape[1], x.shape[2]  # 更新補零後的 H, W
+
+    # 執行 window_partition
+    x = x.view(B, H_pad // window_size, window_size, W_pad // window_size, window_size, C)
+    x = x.permute(0, 1, 3, 2, 4, 5).reshape(-1, window_size * window_size, C)
+    
+    return  x
+
+##########################################################################
+# 窗口token合併
+def window_to_token(x, window_size):
+    """
+    x: (B*num_windows, window_size*window_size, C)
+    return: (1, all_window_tokens, C)
+    """
+    B = x.shape[0] // (x.shape[1] // window_size ** 2)
+    num_windows = x.shape[0] // B
+    x = x.view(B, num_windows, -1, x.shape[-1]).mean(dim=2)  # (B, num_windows, C)
+    x = x.view(1, -1, x.shape[-1])  # 合併所有窗口為單一序列
+    return x
+
+
+##########################################################################
+# REMSA
+class REMSA(nn.Module):
+    """ REMSA for WTM (Window-based Transformer Module) """
+    def __init__(self, dim, num_heads):
+        super().__init__()
+        self.num_heads = num_heads
+        self.scale = (dim // num_heads) ** -0.5
+
+        # Self-Attention Components
+        self.q_proj = nn.Linear(dim, dim, bias=False)
+        self.k_proj = nn.Linear(dim, dim, bias=False)
+        self.v_proj = nn.Linear(dim, dim, bias=False)
+        self.attn_out = nn.Linear(dim, dim, bias=False)
+
+        # Depth-wise Convolution Path
+        self.conv_proj = nn.Linear(dim, dim, bias=False)
+        self.pointwise_conv1 = nn.Conv1d(dim, dim, kernel_size=1, bias=False)  # 1x1 卷積
+        self.depth_conv = nn.Conv1d(dim, dim, kernel_size=3, padding=1, groups=dim)  # 深度卷積
+        self.conv_out = nn.Linear(dim, dim, bias=False)
+
+    def forward(self, x, H, W):
+        B, N, C = x.shape  # N: token count
+        H = self.num_heads
+
+        # Multi-Head Self-Attention
+        q = self.q_proj(x).reshape(B, N, H, -1).permute(0, 2, 1, 3)  
+        k = self.k_proj(x).reshape(B, N, H, -1).permute(0, 2, 1, 3)
+        v = self.v_proj(x).reshape(B, N, H, -1).permute(0, 2, 1, 3)
+
+        attn_scores = (q @ k.transpose(-2, -1)) * self.scale
+        attn_weights = F.softmax(attn_scores, dim=-1)
+        attn_output = attn_weights @ v
+        attn_output = attn_output.permute(0, 2, 1, 3).reshape(B, N, C)
+        attn_output = self.attn_out(attn_output)
+
+        # Depth-wise Convolution Path
+        conv_input = self.conv_proj(x).permute(0, 2, 1)
+        conv_output = self.depth_conv(conv_input).permute(0, 2, 1)
+        conv_output = self.conv_out(conv_output)
+
+        # Combine Attention & Convolution results
+        output = attn_output + conv_output
+        
+        # Reshape to (B, H, W, C) to maintain image format
+        output = output.view(B, H, W, C)
+        
+        return output
+
+    
+##########################################################################
+# LeFF
+class LeFF(nn.Module):
+    """ Local-enhanced Feed-Forward Network (LeFF) """
+    def __init__(self, dim):
+        super().__init__()
+        self.pointwise_conv = nn.Conv2d(dim, dim, kernel_size=1, bias=False)  # 1x1 卷積
+        self.depthwise_conv = nn.Conv2d(dim, dim, kernel_size=3, padding=1, groups=dim)  # 深度可分離卷積
+        self.fc1 = nn.Linear(dim, dim * 4)
+        self.fc2 = nn.Linear(dim * 4, dim)
+        self.act = nn.GELU()
+        
+    def forward(self, x, H, W):
+        B, N, C = x.shape
+        x = x.view(B, H, W, C).permute(0, 3, 1, 2)  # (B, C, H, W)
+        x = self.pointwise_conv(x)  # 1x1 卷積
+        x = self.depthwise_conv(x)  # 深度可分離 3x3 卷積
+        x = x.permute(0, 2, 3, 1).view(B, N, C)  # 還原回 (B, N, C)
+        x = self.fc1(x)
+        x = self.act(x)
+        x = self.fc2(x)
+        x = x.view(B, H, W, C)  # 恢復回影像格式 (B, H, W, C)
+        return x
+##########################################################################
+# Window-based Transformer Module (WTM)
+class WTM(nn.Module):
+    """ Window-based Transformer Module (WTM) """
+    def __init__(self, dim, num_heads, window_size, norm_type='WithBias'):
+        super().__init__()
+        self.window_size = window_size
+        self.norm1 = Norms.Norm(dim, norm_type)
+        self.remsa = REMSA(dim, num_heads)
+        self.norm2 = Norms.Norm(dim, norm_type)
+        self.leff = LeFF(dim)
+        
+    def forward(self, x):
+        """
+        x: (B, H, W, C)
+        return: (B, H, W, C)
+        """
+        B, H, W, C = x.shape
+        x_norm = self.norm1(x)
+        x_windows, _ = window_partition(x_norm, self.window_size)
+        
+        # 直接對窗口內像素執行自注意力
+        remsa_output = self.remsa(x_windows)
+        remsa_output = remsa_output.view(B, H, W, C)
+        
+        # 殘差連接
+        x = x + remsa_output
+        
+        # LeFF 計算
+        x = x + self.leff(self.norm2(x))
+        
         return x
