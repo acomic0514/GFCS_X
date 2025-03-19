@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
-
+"""_summary_
+"""
 # In[ ]:
 
 
@@ -56,8 +57,10 @@ scheduler = CosineAnnealingRestartCyclicLR(
 # 設定 AMP（混合精度）
 scaler = GradScaler(enabled=CONFIG["use_amp"])
 
-# 訓練迴圈
 def train():
+    """
+    訓練迴圈
+    """
     print(f"開始訓練 GFCS_X，使用設備：{CONFIG['device']}")
     for epoch in range(CONFIG["epochs"]):
         model.train()
