@@ -7,5 +7,6 @@
 *.ckpt
 *.jpg
 *.png
+*.pyc
 data/train/
 data/test/
