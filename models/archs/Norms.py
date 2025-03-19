@@ -1,15 +1,9 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[1]:
-
-
 import torch
 import torch.nn as nn
 from einops import rearrange
-
-
-# In[2]:
 
 
 def to_3d(x):
@@ -19,9 +13,6 @@ def to_3d(x):
 def to_4d(x, h, w):
     """Reshape from (B, HW, C) to (B, C, H, W)"""
     return rearrange(x, 'b (h w) c -> b c h w', h=h, w=w)
-
-
-# In[3]:
 
 
 ##########################################################################

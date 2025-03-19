@@ -1,9 +1,6 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[17]:
-
-
 import math
 import torch.optim.lr_scheduler as lr_scheduler
 
@@ -35,10 +32,3 @@ class CosineAnnealingRestartCyclicLR(lr_scheduler._LRScheduler):
             (1 + math.cos(math.pi * ((self.last_epoch - nearest_restart) / current_period)))
             for base_lr in self.base_lrs
         ]
-
-
-# In[ ]:
-
-
-
-

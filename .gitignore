@@ -8,5 +8,6 @@
 *.jpg
 *.png
 *.pyc
+*.part
 data/train/
 data/test/
