@@ -1,21 +1,15 @@
-#!/usr/bin/env python
-# coding: utf-8
-
-# In[ ]:
-
-
 import os
 import torch
 import torch.optim as optim
 from torch.utils.data import DataLoader
 from torch.cuda.amp import GradScaler, autocast
 from tqdm import tqdm
+from metrics.dataloader import RainDataset, get_transform
 
 # Import modules
-from GFCS_X_mod1 import GFCS_X, L1Loss
-from CosineAnnealingRestartCyclicLR import CosineAnnealingRestartCyclicLR
-# 這裡應該還有 DataLoader，但你之後會補上
-# from dataset import CustomDataset 
+from models.archs.GFCS_X_mod1 import GFCS_X
+from models.archs.losses import L1Loss
+from models.CosineAnnealingRestartCyclicLR import CosineAnnealingRestartCyclicLR
 
 # 設定超參數
 CONFIG = {
@@ -44,14 +38,17 @@ model.half()  # ✅ 確保模型參數使用 float16
 criterion = L1Loss().to(CONFIG["device"])
 
 # 創建優化器 & 學習率調整器
-optimizer = optim.AdamW(model.parameters(), lr=CONFIG["lr"], betas=(0.9, 0.999), weight_decay=1e-4)
-scheduler = CosineAnnealingRestartCyclicLR(
-    optimizer, periods=CONFIG["periods"], restart_weights=CONFIG["restart_weights"], eta_mins=[CONFIG["lr"], CONFIG["eta_min"]]
-)
+optimizer = optim.AdamW(model.parameters(), lr=CONFIG["lr"], 
+                        betas=(0.9, 0.999), weight_decay=1e-4)
+scheduler = CosineAnnealingRestartCyclicLR(optimizer, periods=CONFIG["periods"], 
+                                           restart_weights=CONFIG["restart_weights"], 
+                                           eta_mins=[CONFIG["lr"], CONFIG["eta_min"]])
 
-# 設定 DataLoader（這部分等你有 Dataset 再補上）
-# train_dataset = CustomDataset(train_data_path)
-# train_loader = DataLoader(train_dataset, batch_size=CONFIG["batch_size"], shuffle=True, num_workers=CONFIG["num_workers"], pin_memory=True)
+# 設定 DataLoader
+train_dataset = RainDataset(mode='train', dataset_name='Rain13K', 
+                            transform=get_transform(train=True))
+train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=8, 
+                                           shuffle=True, num_workers=4)
 
 # 設定 AMP（混合精度）
 scaler = GradScaler(enabled=CONFIG["use_amp"])
