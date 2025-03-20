@@ -4,8 +4,27 @@ import torch.nn.functional as F
 from einops import rearrange
 import models.archs.Norms as Norms
 
+"""
+組件目錄
+Restromer
+    - MDTA (Multi-DConv Head Transposed Self-Attention)
+    - GDFN (Gated-Dconv Feed-Forward Network)
+    - TransformerBlock 
+Image De-Raining Transformer
+    - window_partition(窗口切割)
+    - window_to_token(窗口token合併)
+    - window_merge(WTM窗口合併)
+    - token_to_window(STM Token合併)
+    - REMSA (relative position enhanced self-attention)
+    - LeFF (Local-enhanced Feed-Forward Network)
+    - WTM (Window-based Transformer Module)
+    - STM (Space-based Transformer Module)
+通用小工具堆放區
+    - auto_num_heads(自動計算 num_heads)
+"""
 
-"""Restomer: Efficient Transformer for High-Resolution Image Restoration"""
+
+"""Restromer: Efficient Transformer for High-Resolution Image Restoration"""
 ##########################################################################
 # Multi-DConv Head Transposed Self-Attention (MDTA)
 class MDTA(nn.Module):
@@ -219,7 +238,7 @@ def token_to_window(tokens, H, W, window_size):
 
 
 ##########################################################################
-# REMSA
+# REMSA (relative position enhanced self-attention)
 class REMSA(nn.Module):
     def __init__(self, dim, num_heads):
         super(REMSA, self).__init__()
@@ -227,30 +246,34 @@ class REMSA(nn.Module):
         self.head_dim = dim // num_heads
         self.scale = self.head_dim ** -0.5
         
-        self.qkv_proj = nn.Linear(dim, dim * 3)
-        self.out_proj = nn.Linear(dim, dim)
+        self.qkv_proj = nn.Linear(dim, dim * 3, dtype=torch.float16)
+        self.out_proj = nn.Linear(dim, dim, dtype=torch.float16)
         
         # 位置關聯的偏置矩陣，使用可學習的相對位置編碼
-        self.position_bias = nn.Parameter(torch.randn(1, num_heads, 1, 1) * 0.01)  # 允許學習且非對稱
+        self.position_bias = nn.Parameter(torch.randn(1, num_heads, 1, 1, dtype=torch.float16) * 0.01)  # 允許學習且非對稱
         
         # 額外的深度卷積分支
-        self.conv_proj = nn.Linear(dim, dim)
-        self.pointwise_conv = nn.Conv1d(in_channels=dim, out_channels=dim, kernel_size=1, groups=1)
-        self.depthwise_conv = nn.Conv1d(in_channels=dim, out_channels=dim, kernel_size=3, padding=1, groups=dim)
-        self.token_wise_proj = nn.Linear(dim, dim)
+        self.conv_proj = nn.Linear(dim, dim, dtype=torch.float16)
+        self.pointwise_conv = nn.Conv1d(in_channels=dim, out_channels=dim, kernel_size=1, groups=1).to(torch.float16)
+        self.depthwise_conv = nn.Conv1d(in_channels=dim, out_channels=dim, kernel_size=3, padding=1, groups=dim).to(torch.float16)
+        self.token_wise_proj = nn.Linear(dim, dim, dtype=torch.float16)
     
     def scaled_dot_product_attention(self, q, k, v):
+        q, k, v = q.to(torch.float16), k.to(torch.float16), v.to(torch.float16) # 確保計算在 float16 上執行 
         attn_scores = torch.matmul(q, k.transpose(-2, -1)) * self.scale
+        
         B, num_heads, seq_len, _ = attn_scores.shape # 確保 position_bias 與 attn_scores 形狀匹配
         if self.position_bias.shape[-2:] != (seq_len, seq_len):
-            self.position_bias = nn.Parameter(torch.randn(1, num_heads, seq_len, seq_len) * 0.01, 
+            self.position_bias = nn.Parameter(torch.randn(1, num_heads, seq_len, seq_len, dtype=torch.float16) * 0.01, 
                                               requires_grad=True).to(q.device)
+            
         attn_scores = attn_scores + self.position_bias  # 加上學習到的位置偏置矩陣
-        attn_weights = F.softmax(attn_scores, dim=-1)
+        attn_weights = F.softmax(attn_scores.to(torch.float32), dim=-1).to(torch.float16)  # Softmax 運算在 float32 上執行
+        
         return torch.matmul(attn_weights, v)
     
     def convolutional_branch(self, x):
-        x_conv = self.conv_proj(x)  # 線性投影
+        x_conv = self.conv_proj(x.to(torch.float16))  # 線性投影 運算在 float16 上執行
         x_conv = x_conv.transpose(1, 2)  # 調整維度以適應 1D 卷積
         x_conv = self.pointwise_conv(x_conv)  # 深度可分卷積
         x_conv = self.depthwise_conv(x_conv)  # 深度可分卷積
@@ -258,6 +281,9 @@ class REMSA(nn.Module):
         return self.token_wise_proj(x_conv)  # Token-wise 線性投影
     
     def forward(self, x):
+        
+        #self-attntion 分支
+        x = x.to(torch.float16)  # 確保計算在 float16 上執行
         batch_size, seq_length, dim = x.shape
         
         qkv = self.qkv_proj(x).reshape(batch_size, seq_length, self.num_heads, 3 * self.head_dim)
@@ -267,104 +293,122 @@ class REMSA(nn.Module):
         attn_output = attn_output.reshape(batch_size, seq_length, dim)
         attn_output = self.out_proj(attn_output)
         
-        # 計算額外的卷積分支
+        # 卷積分支
         conv_output = self.convolutional_branch(x)
         
-        return attn_output + conv_output
+        return (attn_output + conv_output).to(torch.float16)  
 
-    
+
 ##########################################################################
-# LeFF
+# Local-enhanced Feed-Forward Network (LeFF)
 class LeFF(nn.Module):
-    """ Local-enhanced Feed-Forward Network (LeFF) """
     def __init__(self, dim):
         super().__init__()
-        self.pointwise_conv = nn.Conv2d(dim, dim, kernel_size=1, bias=False)  # 1x1 卷積
-        self.depthwise_conv = nn.Conv2d(dim, dim, kernel_size=3, padding=1, groups=dim)  # 深度可分離卷積
-        self.fc1 = nn.Linear(dim, dim * 4)
-        self.fc2 = nn.Linear(dim * 4, dim)
+        self.pointwise_conv = nn.Conv2d(dim, dim, kernel_size=1, bias=False).to(torch.float16)  # 1x1 卷積
+        self.depthwise_conv = nn.Conv2d(dim, dim, kernel_size=3, padding=1, groups=dim).to(torch.float16)  # 深度可分離卷積
+        self.fc1 = nn.Linear(dim, dim * 4, dtype=torch.float16)
+        self.fc2 = nn.Linear(dim * 4, dim, dtype=torch.float16)
         self.act = nn.GELU()
 
-    def forward(self, x, H, W):
-        B, N, C = x.shape
-        assert N == H * W, "N 必須等於 H * W，否則維度不匹配"
+    def forward(self, x):
+        B, C, H, W = x.shape
+        x = x.to(torch.float16)  # 確保運算在 float16
         
-        x = x.view(B, H, W, C).permute(0, 3, 1, 2)  # (B, C, H, W)
         x = self.pointwise_conv(x)  # 1x1 卷積
         x = self.depthwise_conv(x)  # 深度可分離 3x3 卷積
-        x = x.permute(0, 2, 3, 1)  # (B, H, W, C)
         
+        x = x.permute(0, 2, 3, 1)  # 轉換為 (B, H, W, C)
         x = x.view(B, H * W, C)  # 轉換為 (B, N, C) 以符合 fc1
+        
         x = self.fc1(x)
-        x = self.act(x)
+        x = self.act(x.to(torch.float32)).to(torch.float16)  # GELU 運算在 float32 上
         x = self.fc2(x)
-        x = x.view(B, H, W, C)  # 恢復 (B, H, W, C)
+        
+        x = x.view(B, H, W, C) # 轉換為 (B, H, W, C)
+        x = x.permute(0, 3, 1, 2)  # 轉回 (B, C, H, W)
         
         return x
 
 ##########################################################################
 # Window-based Transformer Module (WTM)
 class WTM(nn.Module):
-    """ Window-based Transformer Module (WTM) """
-    def __init__(self, dim, num_heads, window_size, norm_type='WithBias'):
+    def __init__(self, dim, window_size, norm_type='WithBias'):
         super().__init__()
+        self.num_heads = auto_num_heads(dim)  # 自動計算 num_heads
         self.window_size = window_size
         self.norm1 = Norms.Norm(dim, norm_type)
-        self.remsa = REMSA(dim, num_heads)
+        self.remsa = REMSA(dim, self.num_heads)
         self.norm2 = Norms.Norm(dim, norm_type)
         self.leff = LeFF(dim)
         
     def forward(self, x):
         """
-        x: (B, H, W, C)
-        return: (B, H, W, C)
+        x: (B, C, H, W)
+        return: (B, C, H, W)
         """
-        B, H, W, C = x.shape
-        x_norm = self.norm1(x)
-        x_windows, _ = window_partition(x_norm, self.window_size)
+        x = x.to(torch.float16)  # 確保整個過程使用 float16
+        _, _, H, W = x.shape
+        
+        x_norm = self.norm1(x.to(torch.float32)).to(torch.float16)  # 正規化
+        x_windows = window_partition(x_norm, self.window_size) # 窗口切割
         
         # 直接對窗口內像素執行自注意力
-        remsa_output = self.remsa(x_windows)
-        remsa_output = remsa_output.view(B, H, W, C)
+        remsa_output = self.remsa(x_windows) # REMSA 計算
         remsa_output = window_merge(remsa_output, H, W, self.window_size)  # 正確還原形狀
         # 殘差連接
         x = x + remsa_output
         
-        # LeFF 計算
-        x = x + self.leff(self.norm2(x))
+        # LeFF 計算 + 殘差連接
+        x = x + self.leff(self.norm2(x.to(torch.float32)).to(torch.float16))
         
         return x
     
 ##########################################################################
 # Space-based Transformer Module (STM)
 class STM(nn.Module):
-    """ Window-based Transformer Module (WTM) """
-    def __init__(self, dim, num_heads, window_size, norm_type='WithBias'):
+    def __init__(self, dim, window_size, norm_type='WithBias'):
         super().__init__()
+        self.num_heads = auto_num_heads(dim)  # 自動計算 num_heads
         self.window_size = window_size
         self.norm1 = Norms.Norm(dim, norm_type)
-        self.remsa = REMSA(dim, num_heads)
+        self.remsa = REMSA(dim, self.num_heads)
         self.norm2 = Norms.Norm(dim, norm_type)
         self.leff = LeFF(dim)
         
     def forward(self, x):
         """
-        x: (B, H, W, C)
-        return: (B, H, W, C)
+        x: (B, C, H, W)
+        return: (B, C, H, W)
         """
-        B, H, W, C = x.shape
-        x_norm = self.norm1(x)
-        x_windows, _ = window_partition(x_norm, self.window_size)
-        x_windows, _ = window_to_token(x_windows, self.window_size)
+        x = x.to(torch.float16)  # 確保整個過程使用 float16
+        _, _, H, W = x.shape
+        
+        x_norm = self.norm1(x.to(torch.float32)).to(torch.float16) # 正規化
+        x_windows = window_partition(x_norm, self.window_size) # 窗口切割
+        x_windows = window_to_token(x_windows, self.window_size) # Token 合併
         
         # 直接對窗口內像素執行自注意力
-        remsa_output = self.remsa(x_windows)
-        remsa_output = token_to_window(remsa_output, H, W, self.window_size)
+        remsa_output = self.remsa(x_windows) # REMSA 計算
+        remsa_output = token_to_window(remsa_output, H, W, self.window_size) # 正確還原形狀
         
         # 殘差連接
         x = x + remsa_output
         
-        # LeFF 計算
-        x = x + self.leff(self.norm2(x))
+        # LeFF 計算 + 殘差連接
+        x = x + self.leff(self.norm2(x.to(torch.float32)).to(torch.float16))
         
-        return x 
+        return x  
+    
+    """通用小工具堆放區"""
+##########################################################################
+# 自動計算 num_heads
+def auto_num_heads(dim):
+    """標準 Transformer 風格的 num_heads 設定"""
+    if dim >= 128:
+        return 8
+    elif dim >= 64:
+        return 4
+    elif dim >= 32:
+        return 2
+    else:
+        return 1
