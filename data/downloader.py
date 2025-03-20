@@ -7,10 +7,13 @@ TEST_DATA_PATH = 'https://drive.google.com/file/d/1P_-RAvltEoEhfT-9GrWRdpEi6NSsw
 OUTPUT_FOLDER = 'data/'
 
 if __name__ == "__main__":
-    gdown.download(TRAIN_DATA_PATH, OUTPUT_FOLDER, quiet=False, fuzzy=True)
-    gdown.download(TEST_DATA_PATH, OUTPUT_FOLDER, quiet=False, fuzzy=True)
     train_zip_path = os.path.join(OUTPUT_FOLDER, "train.zip")
     test_zip_path = os.path.join(OUTPUT_FOLDER, "test.zip")
+    
+    if not os.path.exists(train_zip_path):
+        gdown.download(TRAIN_DATA_PATH, OUTPUT_FOLDER, quiet=False, fuzzy=True)
+    if not os.path.exists(test_zip_path):
+        gdown.download(TEST_DATA_PATH, OUTPUT_FOLDER, quiet=False, fuzzy=True)
 
     with zipfile.ZipFile(train_zip_path, 'r') as zip_ref:
         zip_ref.extractall(OUTPUT_FOLDER)

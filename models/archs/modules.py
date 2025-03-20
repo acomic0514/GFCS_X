@@ -39,7 +39,7 @@ class MultiDconvHeadTransposedSA(nn.Module):
         4. 應用權重到 V 並輸出
         """
         _, _, h, w = x.shape
-        x = x.half()  # ✅ 轉 float16
+        x = x.half()  # Convert to float16
 
         # 計算 Q, K, V
         qkv = self.qkv_dwconv(self.qkv(x))
@@ -56,7 +56,7 @@ class MultiDconvHeadTransposedSA(nn.Module):
 
         # 計算注意力分數 (使用愛因斯坦求和 `einsum`)
         attn = (q @ k.transpose(-2, -1)) * self.temperature
-        attn = attn.float().softmax(dim=-1).half()  # Softmax 運算仍然使用 float32 再轉回 float16
+        attn = attn.float().softmax(dim=-1).half()  # Softmax in float32 then convert back to float16
 
         # 計算加權輸出
         out = (attn @ v)
@@ -101,10 +101,10 @@ class GatedDconvFFNetwork(nn.Module):
         3. `Gating Mechanism` 控制信息流
         4. `1x1 Conv` 降低維度
         """
-        x = x.half()  # ✅ 轉 float16
+        x = x.half()  # Convert to float16
         x = self.project_in(x)
         x1, x2 = self.dwconv(x).chunk(2, dim=1)  # 拆分通道
-        x1 = nn.GELU(x1.float()).half() # GELU 在 float32 下計算
+        x1 = nn.GELU()(x1.float()).half()  # GELU in float32 then convert back to float16
         x = x1 * x2  # 閘控機制
         x = self.project_out(x)
         return x
