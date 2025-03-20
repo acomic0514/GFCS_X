@@ -2,13 +2,13 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange
-import models.archs.Norms as Norms
+import models.archs.norms as norms
 
 
 """Restomer: Efficient Transformer for High-Resolution Image Restoration"""
 ##########################################################################
 # Multi-DConv Head Transposed Self-Attention (MDTA)
-class MDTA(nn.Module):
+class MultiDconvHeadTransposedSA(nn.Module):
     def __init__(self, dim: int, num_heads: int, bias: bool = False):
         """
         Multi-DConv Head Transposed Self-Attention (MDTA)
@@ -72,7 +72,7 @@ class MDTA(nn.Module):
 
 ##########################################################################
 # Gated-Dconv Feed-Forward Network (GDFN)
-class GDFN(nn.Module):
+class GatedDconvFFNetwork(nn.Module):
     def __init__(self, dim: int, ffn_expansion_factor: float = 2.66, bias: bool = False):
         """
         GDFN - Gated-DConv Feed-Forward Network
@@ -117,10 +117,10 @@ class TransformerBlock(nn.Module):
     def __init__(self, dim, num_heads, ffn_expansion_factor, bias, Norm_type):
         super(TransformerBlock, self).__init__()
 
-        self.norm1 = Norms.Norm(dim, Norm_type)
-        self.MDTA = MDTA(dim, num_heads, bias)
-        self.norm2 = Norms.Norm(dim, Norm_type)
-        self.GDFN = GDFN(dim, ffn_expansion_factor, bias)
+        self.norm1 = norms.Norm(dim, Norm_type)
+        self.MDTA = MultiDconvHeadTransposedSA(dim, num_heads, bias)
+        self.norm2 = norms.Norm(dim, Norm_type)
+        self.GDFN = GatedDconvFFNetwork(dim, ffn_expansion_factor, bias)
 
     def forward(self, x):
         x = x + self.MDTA(self.norm1(x))
@@ -218,7 +218,7 @@ class REMSA(nn.Module):
     
 ##########################################################################
 # LeFF
-class LeFF(nn.Module):
+class LocalEnhancedFFNetwork(nn.Module):
     """ Local-enhanced Feed-Forward Network (LeFF) """
     def __init__(self, dim):
         super().__init__()
@@ -241,15 +241,15 @@ class LeFF(nn.Module):
         return x
 ##########################################################################
 # Window-based Transformer Module (WTM)
-class WTM(nn.Module):
+class WindowBasedTransformer(nn.Module):
     """ Window-based Transformer Module (WTM) """
     def __init__(self, dim, num_heads, window_size, norm_type='WithBias'):
         super().__init__()
         self.window_size = window_size
-        self.norm1 = Norms.Norm(dim, norm_type)
+        self.norm1 = norms.Norm(dim, norm_type)
         self.remsa = REMSA(dim, num_heads)
-        self.norm2 = Norms.Norm(dim, norm_type)
-        self.leff = LeFF(dim)
+        self.norm2 = norms.Norm(dim, norm_type)
+        self.leff = LocalEnhancedFFNetwork(dim)
         
     def forward(self, x):
         """

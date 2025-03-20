@@ -17,9 +17,9 @@ def to_4d(x, h, w):
 
 ##########################################################################
 # Dynamic Tanh (DyT)
-class DyT(nn.Module):
+class DynamicTanh(nn.Module):
     def __init__(self, normalized_shape: int, init_alpha=1.0):
-        super(DyT, self).__init__()
+        super(DynamicTanh, self).__init__()
         self.alpha = nn.Parameter(torch.ones(1) * init_alpha)
         self.gamma = nn.Parameter(torch.ones(normalized_shape))
         self.beta = nn.Parameter(torch.zeros(normalized_shape))
@@ -68,7 +68,7 @@ class Norm(nn.Module):
         if norm_type == 'BiasFree':
             self.body = BiasFreeLayerNorm(dim)
         elif norm_type == 'DyT':
-            self.body = DyT(dim)
+            self.body = DynamicTanh(dim)
         else:
             self.body = WithBiasLayerNorm(dim)
 

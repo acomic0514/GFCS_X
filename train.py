@@ -7,7 +7,7 @@ from tqdm import tqdm
 from metrics.dataloader import RainDataset, get_transform
 
 # Import modules
-from models.archs.GFCS_X_mod1 import GFCS_X
+from models.archs.GFCS_X_mod1 import GFCSNetwork
 from models.archs.losses import L1Loss
 from models.CosineAnnealingRestartCyclicLR import CosineAnnealingRestartCyclicLR
 
@@ -26,36 +26,37 @@ CONFIG = {
     "use_amp": True,  # 是否使用混合精度
 }
 
-# 創建存放模型的資料夾
-os.makedirs(CONFIG["checkpoint_dir"], exist_ok=True)
+if __name__ == "__main__":
+    # 創建存放模型的資料夾
+    os.makedirs(CONFIG["checkpoint_dir"], exist_ok=True)
 
-# 創建模型
-model = GFCS_X(inp_channels=3, out_channels=3, dim=48)
-model.to(CONFIG["device"])
-model.half()  # ✅ 確保模型參數使用 float16
+    # 創建模型
+    model = GFCSNetwork(inp_channels=3, out_channels=3, dim=48)
+    model.to(CONFIG["device"])
+    model.half()  # ✅ 確保模型參數使用 float16
 
-# 創建損失函數
-criterion = L1Loss().to(CONFIG["device"])
+    # 創建損失函數
+    criterion = L1Loss().to(CONFIG["device"])
 
-# 創建優化器 & 學習率調整器
-optimizer = optim.AdamW(model.parameters(), lr=CONFIG["lr"], 
-                        betas=(0.9, 0.999), weight_decay=1e-4)
-scheduler = CosineAnnealingRestartCyclicLR(optimizer, periods=CONFIG["periods"], 
-                                           restart_weights=CONFIG["restart_weights"], 
-                                           eta_mins=[CONFIG["lr"], CONFIG["eta_min"]])
+    # 創建優化器 & 學習率調整器
+    optimizer = optim.AdamW(model.parameters(), lr=CONFIG["lr"], 
+                            betas=(0.9, 0.999), weight_decay=1e-4)
+    scheduler = CosineAnnealingRestartCyclicLR(optimizer, periods=CONFIG["periods"], 
+                                            restart_weights=CONFIG["restart_weights"], 
+                                            eta_mins=[CONFIG["lr"], CONFIG["eta_min"]])
 
-# 設定 DataLoader
-train_dataset = RainDataset(mode='train', dataset_name='Rain13K', 
-                            transform=get_transform(train=True))
-train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=8, 
-                                           shuffle=True, num_workers=4)
+    # 設定 DataLoader
+    train_dataset = RainDataset(mode='train', dataset_name='Rain13K', 
+                                transform=get_transform(train=True))
+    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=8, 
+                                            shuffle=True, num_workers=4)
 
-# 設定 AMP（混合精度）
-scaler = GradScaler(enabled=CONFIG["use_amp"])
-
-# 訓練迴圈
-def train():
+    # 設定 AMP（混合精度）
+    scaler = GradScaler(enabled=CONFIG["use_amp"])
+    
+    # 訓練迴圈
     print(f"開始訓練 GFCS_X，使用設備：{CONFIG['device']}")
+    
     for epoch in range(CONFIG["epochs"]):
         model.train()
         running_loss = 0.0
@@ -90,7 +91,4 @@ def train():
             save_path = os.path.join(CONFIG["checkpoint_dir"], f"GFCS_X_epoch{epoch+1}.pth")
             torch.save(model.state_dict(), save_path)
             print(f"模型已保存：{save_path}")
-
-if __name__ == "__main__":
-    train()
 
