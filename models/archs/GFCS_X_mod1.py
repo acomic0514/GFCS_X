@@ -56,17 +56,14 @@ class GFCSNetwork(nn.Module):
         inp_channels=3, 
         out_channels=3, 
         dim = 48,
-        num_blocks = None, 
+        num_blocks = [4,6,6,8], 
         num_refinement_blocks = 4,
-        heads = None,
+        heads = [1,2,4,8],
         ffn_expansion_factor = 2.66,
         bias = False,
         Norm_type = 'BiasFree',   ## Option: 'BiasFree' 'WithBias' 'DyT'
         dual_pixel_task = False   ## True for dual-pixel defocus deblurring only. Also set inp_channels=6
     ):
-        self.num_blocks = num_blocks if num_blocks is not None else [4,6,6,8]
-        self.heads = heads if heads is not None else [1,2,4,8]
-
         super(GFCSNetwork, self).__init__()
         
         self.patch_embed = OverlapPatchEmbed(inp_channels, dim)

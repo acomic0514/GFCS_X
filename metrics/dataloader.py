@@ -71,7 +71,7 @@ def get_transform(train=True):
         return transforms.Compose([
             transforms.RandomHorizontalFlip(),  # 隨機水平翻轉
             transforms.RandomRotation(10),  # 隨機旋轉 ±10 度
-            #transforms.RandomResizedCrop(256, scale=(0.8, 1.0)),  # 隨機裁剪
+            transforms.RandomResizedCrop(256, scale=(0.8, 1.0)),  # 隨機裁剪
             transforms.ToTensor(),  # 轉換為 Tensor
             transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])  # 標準化
         ])
