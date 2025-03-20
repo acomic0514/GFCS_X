@@ -1,8 +1,6 @@
 import torch
 from models.archs.GFCS_X_mod1 import GFCSNetwork
 
-TOTAL_SIZE = 0
-
 def get_module_size(module):
     # Only count parameters and buffers defined directly in this module.
     param_size = sum(p.nelement() * p.element_size() for p in module.parameters(recurse=False))
@@ -11,14 +9,14 @@ def get_module_size(module):
     return total_size
 
 def print_component_sizes(model):
-    global TOTAL_SIZE
+    total = 0
     print("Component memory usage breakdown (parameters+buffers in MB):")
     for name, module in model.named_modules():
         size = get_module_size(module)
         if size > 0:
             print(f"{name if name else 'ROOT'}: {size:.4f} MB")
-        TOTAL_SIZE += size
-    print(f"Total: {TOTAL_SIZE:.4f} MB")
+        total += size
+    print(f"Total: {total:.4f} MB")
 
 def get_model_size(model):
     param_size = 0
