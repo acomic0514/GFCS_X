@@ -20,6 +20,8 @@ Image De-Raining Transformer
     - WTM (Window-based Transformer Module)
     - STM (Space-based Transformer Module)
     - IDT (Image De-Raining Transformer) (WTM>>STM)
+Hybrid CNN-Transformer Feature Fusion
+    - DegradationAwareMoE (Degradation-aware mixture of experts)
 通用小工具堆放區
     - auto_num_heads(自動計算 num_heads)
 """
@@ -419,8 +421,56 @@ class IDT(nn.Module):
         x = self.wtm(x)  # 先經過 WTM
         x = self.stm(x)  # 再經過 STM
         return x
+
+"""Hybrid CNN-Transformer Feature Fusion for Single Image Deraining"""
+##########################################################################
+# degradation-aware mixture of experts (DaMoE)
+
+class DegradationAwareMoE(nn.Module):
+    def __init__(self, in_channels, out_channels, hidden_dim=16):
+        super(DegradationAwareMoE, self).__init__()
+        
+        self.experts = nn.ModuleList([
+            nn.AvgPool2d(3, stride=1, padding=1),  # 3×3 pooling
+            nn.Conv2d(in_channels, out_channels, 1, dtype=torch.float16),  # 1×1 conv
+            nn.Conv2d(in_channels, out_channels, 3, padding=1, dtype=torch.float16),  # 3×3 conv
+            nn.Conv2d(in_channels, out_channels, 5, padding=2, dtype=torch.float16),  # 5×5 conv
+            nn.Conv2d(in_channels, out_channels, 7, padding=3, dtype=torch.float16),  # 7×7 conv
+            nn.Conv2d(in_channels, out_channels, 3, padding=3, dilation=3, dtype=torch.float16),  # 3×3 dilated
+            nn.Conv2d(in_channels, out_channels, 5, padding=6, dilation=3, dtype=torch.float16),  # 5×5 dilated
+            nn.Conv2d(in_channels, out_channels, 7, padding=9, dilation=3, dtype=torch.float16)   # 7×7 dilated
+        ])
+        
+        self.num_experts = len(self.experts)  # 動態計算專家數量
+        
+        # 兩層可學習權重 W1, W2
+        self.W1 = nn.Linear(in_channels, hidden_dim, dtype=torch.float16)  # W1: (T x C)
+        self.W2 = nn.Linear(hidden_dim, self.num_experts, dtype=torch.float16)  # W2: (O x T)
+        
+        self.final_conv = nn.Conv2d(out_channels, out_channels, kernel_size=1, padding=0, dtype=torch.float16)  # 1×1 conv
     
-    """通用小工具堆放區"""
+    def forward(self, x):
+        x = x.to(dtype=torch.float16)  # 確保輸入為 float16
+        b, c, h, w = x.shape
+        
+        # 通道平均池化計算 z_c
+        z_c = x.mean(dim=[2, 3])  # (B, C)
+        
+        # 使用 W1, W2 計算專家權重（使用 float32 避免數值不穩定）
+        weights = self.W2(F.relu(self.W1(z_c)))  # (B, num_experts)
+        weights = torch.softmax(weights, dim=1).to(dtype=torch.float16)  # 應用 softmax，然後轉回 float16
+        
+        # 計算專家輸出
+        expert_outputs = torch.stack([expert(x) for expert in self.experts], dim=1)  # (B, num_experts, C, H, W)
+        mixture = torch.sum(weights.view(b, -1, 1, 1, 1) * expert_outputs, dim=1)  # (B, C, H, W)
+        
+        # 1×1 卷積處理後再加上殘差連接
+        output = self.final_conv(mixture) + x
+        return output.to(dtype=torch.float16)
+
+
+    
+"""通用小工具堆放區"""
 ##########################################################################
 # 自動計算 num_heads
 def auto_num_heads(dim):
