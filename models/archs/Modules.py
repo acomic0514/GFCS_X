@@ -19,6 +19,7 @@ Image De-Raining Transformer
     - LeFF (Local-enhanced Feed-Forward Network)
     - WTM (Window-based Transformer Module)
     - STM (Space-based Transformer Module)
+    - IDT (Image De-Raining Transformer) (WTM>>STM)
 通用小工具堆放區
     - auto_num_heads(自動計算 num_heads)
 """
@@ -398,6 +399,26 @@ class STM(nn.Module):
         x = x + self.leff(self.norm2(x.to(torch.float32)).to(torch.float16))
         
         return x  
+    
+##########################################################################
+# Image De-Raining Transformer (WTM >> STM) 名字怎麼都好可以再想想
+class IDT(nn.Module):
+    """ 
+    Image De-Raining Transformer (WTM >> STM)
+    """
+    def __init__(self, dim, window_size, norm_type='WithBias'):
+        super().__init__()
+        self.wtm = WTM(dim, window_size, norm_type)
+        self.stm = STM(dim, window_size, norm_type)
+
+    def forward(self, x):
+        """
+        x: (B, C, H, W) - 影像特徵圖
+        return: (B, C, H, W) - 經過 WTM 和 STM 處理的影像特徵圖
+        """
+        x = self.wtm(x)  # 先經過 WTM
+        x = self.stm(x)  # 再經過 STM
+        return x
     
     """通用小工具堆放區"""
 ##########################################################################
