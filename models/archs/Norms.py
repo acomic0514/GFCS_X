@@ -4,6 +4,7 @@
 import torch
 import torch.nn as nn
 from einops import rearrange
+import torch.nn.functional as F
 
 
 def to_3d(x):
@@ -13,6 +14,19 @@ def to_3d(x):
 def to_4d(x, h, w):
     """Reshape from (B, HW, C) to (B, C, H, W)"""
     return rearrange(x, 'b (h w) c -> b c h w', h=h, w=w)
+
+##########################################################################
+# LayerNorm
+class LayerNorm(nn.Module):
+    """ LayerNorm but with an optional bias. PyTorch doesn't support simply bias=False """
+
+    def __init__(self, dim: int, bias: bool = True):
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(dim))
+        self.bias = nn.Parameter(torch.zeros(dim)) if bias else None
+
+    def forward(self, input):
+        return F.layer_norm(input, self.weight.shape, self.weight, self.bias, 1e-5)
 
 
 ##########################################################################
@@ -27,12 +41,13 @@ class DyT(nn.Module):
     def forward(self, x):
         x = torch.tanh(self.alpha * x)
         return self.gamma.view(1, -1, 1, 1) * x + self.beta.view(1, -1, 1, 1)
-        
+   
+"""     
 ##########################################################################
 #Layer Norm
 
 class BiasFreeLayerNorm(nn.Module):
-    """LayerNorm without bias"""
+    
     def __init__(self, normalized_shape: int):
         super().__init__()
         self.weight = nn.Parameter(torch.ones(normalized_shape))
@@ -43,7 +58,7 @@ class BiasFreeLayerNorm(nn.Module):
 
 
 class WithBiasLayerNorm(nn.Module):
-    """LayerNorm with bias"""
+    
     def __init__(self, normalized_shape: int):
         super().__init__()
         self.weight = nn.Parameter(torch.ones(normalized_shape))
@@ -53,6 +68,7 @@ class WithBiasLayerNorm(nn.Module):
         mu = x.mean(dim=-1, keepdim=True)
         sigma = x.var(dim=-1, keepdim=True, unbiased=False)
         return (x - mu) / torch.sqrt(sigma + 1e-5) * self.weight + self.bias
+"""
 
 ##########################################################################
 #Norm 方式選擇(可使用DyT)
@@ -66,11 +82,11 @@ class Norm(nn.Module):
         
         self.norm_type = norm_type
         if norm_type == 'BiasFree':
-            self.body = BiasFreeLayerNorm(dim)
+            self.body = LayerNorm(dim, bias=False)
         elif norm_type == 'DyT':
             self.body = DyT(dim)
         else:
-            self.body = WithBiasLayerNorm(dim)
+            self.body = LayerNorm(dim, bias=True)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         h, w = x.shape[-2:]

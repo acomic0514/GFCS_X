@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange
-import models.archs.Norms as Norms
+import models.archs.Norms as Norms, LayerNorm
 
 """
 組件目錄
@@ -24,6 +24,9 @@ Hybrid CNN-Transformer Feature Fusion
     - DegradationAwareMoE (Degradation-aware mixture of experts)
 通用小工具堆放區
     - auto_num_heads(自動計算 num_heads)
+    - to_3d(影像轉token序列)
+    - to_4d(token序列轉影像)
+    - MLP (flaoat16)
 """
 
 
@@ -126,7 +129,7 @@ class GDFN(nn.Module):
         x = x.half()  # ✅ 轉 float16
         x = self.project_in(x)
         x1, x2 = self.dwconv(x).chunk(2, dim=1)  # 拆分通道
-        x1 = nn.GELU(x1.float()).half() # GELU 在 float32 下計算
+        x1 = F.gelu(x1.float()).half() # GELU 在 float32 下計算
         x = torch.mul(x1, x2)  # 閘控機制
         x = self.project_out(x)
         return x
@@ -179,7 +182,7 @@ def window_partition(x, window_size):
 def window_to_token(x, window_size):
     """
     x: (B*num_windows, window_size*window_size, C)
-    return: (1, all_window_tokens, C)
+    return: (B, all_window_tokens, C)
     """
     B = x.shape[0] // (x.shape[1] // window_size ** 2)
     num_windows = x.shape[0] // B
@@ -311,7 +314,6 @@ class LeFF(nn.Module):
         self.depthwise_conv = nn.Conv2d(dim, dim, kernel_size=3, padding=1, groups=dim).to(torch.float16)  # 深度可分離卷積
         self.fc1 = nn.Linear(dim, dim * 4, dtype=torch.float16)
         self.fc2 = nn.Linear(dim * 4, dim, dtype=torch.float16)
-        self.act = nn.GELU()
 
     def forward(self, x):
         B, C, H, W = x.shape
@@ -324,7 +326,7 @@ class LeFF(nn.Module):
         x = x.view(B, H * W, C)  # 轉換為 (B, N, C) 以符合 fc1
         
         x = self.fc1(x)
-        x = self.act(x.to(torch.float32)).to(torch.float16)  # GELU 運算在 float32 上
+        x = F.gelu(x.to(torch.float32)).to(torch.float16)  # GELU 運算在 float32 上
         x = self.fc2(x)
         
         x = x.view(B, H, W, C) # 轉換為 (B, H, W, C)
@@ -468,9 +470,68 @@ class DegradationAwareMoE(nn.Module):
         output = self.final_conv(mixture) + x
         return output.to(dtype=torch.float16)
 
+"""Token statistics transformer: linear-time attention via variational rate reduction"""
+##########################################################################
+# ToST（Token Statistics Transformer） 版本的自注意力，取代傳統的 QK 相似性計算
+class CausalSelfAttention_TSSA(nn.Module):
+
+    def __init__(self, dim, num_heads = 8, block_size = 1024, dropout = 0.1, bias=False , dtype=torch.float16):
+        super().__init__()
+        
+        self.c_attn = nn.Linear(dim, dim, bias=bias, dtype=dtype)
+        # output projection
+        self.c_proj = nn.Linear(dim, dim, bias=bias, dtype=dtype)
+        # regularization
+        self.attn_dropout = nn.Dropout(dropout, dtype)
+        self.resid_dropout = nn.Dropout(dropout, dtype)
+        self.n_head = num_heads
+        self.dim = dim
+        self.dropout = dropout
+        self.block_size = block_size
+        self.temp = nn.Parameter(torch.ones(self.n_head, 1)).to(dtype)
+        self.denom_bias = nn.Parameter(torch.zeros(self.n_head, block_size, 1)).to(dtype)
+        
+    def forward(self, x):
+        x = x.to(torch.float16) # 確保計算在 float16 上執行
+        B, N, C = x.size() # batch size, sequence length, embedding dimensionality (dim)
+
+        # calculate query, key, values for all heads in batch and move head forward to be the batch dim
+        w = self.c_attn(x).view(B, N, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+        w_sq = w ** 2
+        denom = (torch.cumsum(w_sq,dim=-2)).clamp_min(1e-12)
+        w_normed = (w_sq / denom) + self.denom_bias[:,:N,:]
+        tmp = torch.sum(w_normed, dim=-1)* self.temp
+        
+        Pi = F.softmax(tmp, dim=1) # B, nh, T
+        dots = torch.cumsum(w_sq * Pi.unsqueeze(-1), dim=-2) / (Pi.cumsum(dim=-1) + 1e-8).unsqueeze(-1)
+        attn = 1. / (1 + dots)       
+        attn = self.attn_dropout(attn)
+        y = - torch.mul(w.mul(Pi.unsqueeze(-1)), attn)
+        y = y.transpose(1, 2).contiguous().view(B, N, C) # re-assemble all head outputs side by side
+        y = self.resid_dropout(self.c_proj(y))
+        return y
+
+##########################################################################
+# ToST（Token Statistics Transformer）塊
+class ToSTBlock(nn.Module):
+
+    def __init__(self, dim = 1024):
+        super().__init__()
+        self.ln_1 = LayerNorm(dim) # LayerNorm
+        self.attn = CausalSelfAttention_TSSA(dim) # TSSA
+        
+        self.ln_2 = LayerNorm(dim) # LayerNorm
+        self.mlp = MLP(dim)
+        eta = 1e-5
+        self.gamma1 = nn.Parameter(eta * torch.ones(dim), requires_grad=True)
+        self.gamma2 = nn.Parameter(eta * torch.ones(dim), requires_grad=True)
+    def forward(self, x):
+        x = x + self.gamma1 *self.attn(self.ln_1(x))
+        x = x + self.gamma2 *self.mlp(self.ln_2(x))
+        return x
 
     
-"""通用小工具堆放區"""
+"""通用組件小工具堆放區"""
 ##########################################################################
 # 自動計算 num_heads
 def auto_num_heads(dim):
@@ -483,3 +544,34 @@ def auto_num_heads(dim):
         return 2
     else:
         return 1
+
+##########################################################################
+# 影像轉token序列 (B, C, H, W) to (B, HW, C)
+def to_3d(x):
+    """Reshape from (B, C, H, W) to (B, HW, C)"""
+    return rearrange(x, 'b c h w -> b (h w) c')
+
+##########################################################################
+# token序列轉影像 (B, HW, C) to (B, C, H, W)
+def to_4d(x, h, w):
+    """Reshape from (B, HW, C) to (B, C, H, W)"""
+    return rearrange(x, 'b (h w) c -> b c h w', h=h, w=w)
+
+##########################################################################
+# MLP (flaoat16)
+class MLP(nn.Module):
+
+    def __init__(self, dim, dropout=0.1, bias=True):
+        super().__init__()
+        self.c_fc    = nn.Linear(dim, 4*dim, bias=bias, dtype=torch.float16)
+        self.gelu    = nn.GELU()
+        self.c_proj  = nn.Linear(4*dim, dim, bias=bias, dtype=torch.float16)
+        self.dropout = nn.Dropout(dropout, dtype=torch.float16)
+
+    def forward(self, x):
+        x = x.to(torch.float16)
+        x = self.c_fc(x)
+        x = self.gelu(x.to(torch.float32)).to(torch.float16)
+        x = self.c_proj(x)
+        x = self.dropout(x)
+        return x
