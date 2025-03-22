@@ -25,6 +25,10 @@ Hybrid CNN-Transformer Feature Fusion
 Token statistics transformer
     - CausalSelfAttention_TSSA (ToST 版本的自注意力)
     - ToSTBlock (ToST 版本的 Transformer 塊)
+A novel dual-stage progressive enhancement network for single image deraining
+    - dilated dense residual block (DDRB)
+    - enhanced residual pixel-wise attention block (ERPAB)
+    - cross-stage feature interaction module (CFIM)    
 通用小工具堆放區
     - auto_num_heads(自動計算 num_heads)
     - to_3d(影像轉token序列)
@@ -581,7 +585,146 @@ class ToSTBlock(nn.Module):
             x = x + self.gamma2.view(1, -1, 1, 1) *to_4d(self.mlp(self.ln_2(to_3d(x))), H, W)
         return x
 
+
+
+"""A novel dual-stage progressive enhancement network for single image deraining"""
+##########################################################################
+# dilated dense residual block (DDRB)
+class DDRB(nn.Module):
+    """
+    Dilated Dense Residual Block 
+    Usage:
+        self.ddrb = DDRB(in_channels=32, mid_channels=32, kernel=3, stride=1, d=[1, 2, 5], bias=False)
+    """
+    def __init__(self,
+                 in_channels=32,
+                 mid_channels=32,
+                 kernel=3,
+                 stride=1,
+                 d=[1, 2, 5],
+                 bias=False):
+        super(DDRB, self).__init__()
+        self.convD1 = nn.Sequential(
+                nn.Conv2d(in_channels, mid_channels, kernel, stride, padding=d[0], dilation=d[0], bias=bias),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(mid_channels, mid_channels, kernel, stride, padding=d[0], dilation=d[0], bias=bias)
+            ) # dilation=1
+        self.convD2 = nn.Sequential(
+                nn.Conv2d(in_channels, mid_channels, kernel, stride, padding=d[1], dilation=d[1], bias=bias),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(mid_channels, mid_channels, kernel, stride, padding=d[1], dilation=d[1], bias=bias)
+            ) # dilation=2
+        self.convD3 = nn.Sequential(
+                nn.Conv2d(in_channels, mid_channels, kernel, stride, padding=d[2], dilation=d[2], bias=bias),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(mid_channels, mid_channels, kernel, stride, padding=d[2], dilation=d[2], bias=bias)
+            ) # dilation=5
+            
+    def forward(self, x):
+        """
+        Args:
+            x: input feature map
+        Returns:
+            enhanced feature map
+        Usage:
+            enhanced_feature = DDRB(input_feature)
+        """
+        with torch.cuda.amp.autocast():
+            x1 = self.convD1(x)
+            x2 = self.convD2(x+x1)
+            x3 = self.convD3(x+x1+x2)
+       
+        return x + x1 + x2 + x3
     
+##########################################################################
+# enhanced residual pixel-wise attention block (ERPAB)
+class ERPAB(nn.Module):
+    """ 
+    Enhanced Residual Pixel-wise Attention Block 
+    Usage:
+        self.erpab = ERPAB(in_channels=32, mid_channels=32, kernel=3, stride=1, d=[1, 2, 5], bias=False)
+    """
+    def __init__(self,
+                 in_channels=32,
+                 mid_channels=32,
+                 kernel=3,
+                 stride=1,
+                 d=[1, 2, 5],
+                 bias=False):
+        super(ERPAB, self).__init__()
+        
+        self.experts = nn.ModuleList([
+            nn.Conv2d(in_channels, mid_channels, kernel, stride, padding=d[0], dilation=d[0], bias=bias),  # C32D1
+            nn.Conv2d(in_channels, mid_channels, kernel, stride, padding=d[1], dilation=d[1], bias=bias),  # C32D2
+            nn.Conv2d(in_channels, mid_channels, kernel, stride, padding=d[2], dilation=d[2], bias=bias),  # C32D5
+        ])
+        
+        self.conv1 = nn.Conv2d(mid_channels*3, mid_channels, kernel_size=3, padding=1, bias=False)
+        self.attn_map = nn.Sequential(
+            nn.Conv2d(mid_channels, 1, kernel_size=3, padding=1, bias=False),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(1, in_channels, kernel_size=3, padding=1, bias=False)
+        )
+        self.sigmoid = nn.Sigmoid()
+    
+    def forward(self, x):
+        """
+        Args:
+            x: input feature map
+        Returns:
+            enhanced feature map
+        Usage:
+            enhanced_feature = ERPAB(input_feature)
+        """
+        with torch.cuda.amp.autocast():
+            expert_outputs = torch.cat([expert(x) for expert in self.experts], dim=1)
+            x1 = F.relu(self.conv1(expert_outputs))
+            attn_map = self.attn_map(x1)
+
+        return x + x1 * self.sigmoid(attn_map)
+
+##########################################################################
+# cross-stage feature interaction module (CFIM)
+class CFIM(nn.Module):
+    """
+    Cross-Stage Feature Interaction Module
+    Usage:
+        self.cfim = CFIM(in_channels=32, norm_type = 'DyT' or 'WithBias' or 'BiasFree')
+    """
+    def __init__(self, in_channels, norm_type='DyT'):
+        super(CFIM, self).__init__()
+        self.norm1 = Norms.Norm(in_channels, norm_type)
+        self.norm2 = Norms.Norm(in_channels, norm_type)
+        self.rsconv1 = nn.Conv2d(in_channels, in_channels, kernel_size=3, padding=1, bias=False)
+        self.rsconv2 = nn.Conv2d(in_channels, in_channels, kernel_size=3, padding=1, bias=False)
+        self.drconv1 = nn.Conv2d(in_channels, in_channels, kernel_size=3, padding=1, bias=False)
+        self.drconv2 = nn.Conv2d(in_channels, in_channels, kernel_size=3, padding=1, bias=False)
+    
+    def forward(self, r_net, dr_net):
+        """
+        Args:
+            rs_net: rain streaks removal network intermediate output
+            dr_net: details reconstruction network intermediate output
+        Returns:
+            to_rs_net: updated rain streaks removal network intermediate output
+            to_dr_net: updated details reconstruction network intermediate output
+        Usage:
+            to_rs_net, to_dr_net = CFIM(r_net, dr_net)
+        """     
+        with torch.cuda.amp.autocast():
+            rs1 = self.rsconv1(self.norm1(r_net))
+            dr1 = self.drconv1(self.norm2(dr_net))
+            A = torch.matmul(rs1, dr1)
+            rs2 = self.rsconv2(rs1)
+            dr2 = self.drconv2(dr1)
+            rs_side = torch.matmul(A, rs2)
+            dr_side = torch.matmul(A, dr2)
+            to_rs_net = dr_side + r_net
+            to_dr_net = rs_side + dr_net
+
+        return to_rs_net, to_dr_net
+
+ 
 """通用組件小工具堆放區"""
 ##########################################################################
 # 自動計算 num_heads
