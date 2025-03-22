@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from models.archs.Modules import DDRB, ERPAB, CFIM
+from models.archs.modules import DDRB, ERPAB, CFIM
 
 ##########################################################################
 # DPENet_v2 with CFIM

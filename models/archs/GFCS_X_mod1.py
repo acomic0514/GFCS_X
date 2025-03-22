@@ -121,18 +121,9 @@ class GFCS_X(nn.Module):
             
         self.output = nn.Conv2d(int(dim*2**1), out_channels, kernel_size=3, stride=1, padding=1, bias=bias)
         
-        self.apply(self._convert_to_fp16)  # ✅ 讓所有參數都轉為 float16
-        
-    def _convert_to_fp16(self, module):
-        """ 遍歷所有層，將數據類型轉為 `float16`，但 LayerNorm 例外 """
-        if isinstance(module, Norm):  # LayerNorm 保持 `float32`
-            module.float()  # ✅ LayerNorm 仍然保持 `float32`
-        else:
-            module.half()  # 其他層轉為 `float16`
-            
-    def forward(self, inp_img):
-        inp_img = inp_img.half() # ✅ 確保輸入是 float16
 
+        
+    def forward(self, inp_img):
         inp_enc_level1 = self.patch_embed(inp_img)
         out_enc_level1 = self.encoder_level1(inp_enc_level1)
         
