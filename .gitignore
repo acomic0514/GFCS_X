@@ -9,5 +9,6 @@
 *.png
 *.pyc
 *.part
+*.txt
 data/train/
 data/test/
