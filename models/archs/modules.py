@@ -36,7 +36,7 @@ Token statistics transformer
 """Restromer: Efficient Transformer for High-Resolution Image Restoration"""
 ##########################################################################
 # Multi-DConv Head Transposed Self-Attention (MDTA)
-class MDTA(nn.Module):
+class MultiDconvHeadTransposedSA(nn.Module):
     def __init__(self, dim: int, num_heads: int, bias: bool = False, dtype=torch.float16):
         """
         Multi-DConv Head Transposed Self-Attention (MDTA)
@@ -104,7 +104,7 @@ class MDTA(nn.Module):
 
 ##########################################################################
 # Gated-Dconv Feed-Forward Network (GDFN)
-class GDFN(nn.Module):
+class GatedDconvFFN(nn.Module):
     def __init__(self, dim: int, ffn_expansion_factor: float = 2.66, 
                  bias: bool = False, dtype=torch.float16):
         """
@@ -157,9 +157,9 @@ class TransformerBlock(nn.Module):
         super(TransformerBlock, self).__init__()
 
         self.norm1 = norms.Norm(dim, Norm_type)
-        self.MDTA = MDTA(dim, num_heads, bias)
+        self.MDTA = MultiDconvHeadTransposedSA(dim, num_heads, bias)
         self.norm2 = norms.Norm(dim, Norm_type)
-        self.GDFN = GDFN(dim, ffn_expansion_factor, bias)
+        self.GDFN = GatedDconvFFN(dim, ffn_expansion_factor, bias)
 
     def forward(self, x):
         x = x.to(torch.float16)  # 確保整個過程使用 float16
@@ -262,9 +262,9 @@ def token_to_window(tokens, H, W, window_size):
 
 ##########################################################################
 # REMSA (relative position enhanced self-attention)
-class REMSA(nn.Module):
+class RelativePositionEnhancedSA(nn.Module):
     def __init__(self, dim, num_heads, dtype=torch.float16):
-        super(REMSA, self).__init__()
+        super(RelativePositionEnhancedSA, self).__init__()
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
         self.scale = self.head_dim ** -0.5
@@ -329,7 +329,7 @@ class REMSA(nn.Module):
 
 ##########################################################################
 # Local-enhanced Feed-Forward Network (LeFF)
-class LeFF(nn.Module):
+class LocalEnhancedFFN(nn.Module):
     def __init__(self, dim, dtype=torch.float16):
         super().__init__()
         self.pointwise_conv = nn.Conv2d(dim, dim, kernel_size=1, bias=False, dtype=dtype)  # 1x1 卷積
@@ -363,15 +363,15 @@ class LeFF(nn.Module):
 
 ##########################################################################
 # Window-based Transformer Module (WTM)
-class WTM(nn.Module):
+class WindowBasedTM(nn.Module):
     def __init__(self, dim, window_size, norm_type='WithBias'):
         super().__init__()
         self.num_heads = auto_num_heads(dim)  # 自動計算 num_heads
         self.window_size = window_size
         self.norm1 = norms.Norm(dim, norm_type)
-        self.remsa = REMSA(dim, self.num_heads)
+        self.remsa = RelativePositionEnhancedSA(dim, self.num_heads)
         self.norm2 = norms.Norm(dim, norm_type)
-        self.leff = LeFF(dim)
+        self.leff = LocalEnhancedFFN(dim)
         
     def forward(self, x):
         """
@@ -398,15 +398,15 @@ class WTM(nn.Module):
     
 ##########################################################################
 # Space-based Transformer Module (STM)
-class STM(nn.Module):
+class SpaceBasedTM(nn.Module):
     def __init__(self, dim, window_size, norm_type='WithBias'):
         super().__init__()
         self.num_heads = auto_num_heads(dim)  # 自動計算 num_heads
         self.window_size = window_size
         self.norm1 = norms.Norm(dim, norm_type)
-        self.remsa = REMSA(dim, self.num_heads)
+        self.remsa = RelativePositionEnhancedSA(dim, self.num_heads)
         self.norm2 = norms.Norm(dim, norm_type)
-        self.leff = LeFF(dim)
+        self.leff = LocalEnhancedFFN(dim)
         
     def forward(self, x):
         """
@@ -435,14 +435,14 @@ class STM(nn.Module):
     
 ##########################################################################
 # Image De-Raining Transformer (WTM >> STM) 名字怎麼都好可以再想想
-class IDT(nn.Module):
+class ImageDerainingTransformer(nn.Module):
     """ 
     Image De-Raining Transformer (WTM >> STM)
     """
     def __init__(self, dim, window_size, norm_type='WithBias'):
         super().__init__()
-        self.wtm = WTM(dim, window_size, norm_type)
-        self.stm = STM(dim, window_size, norm_type)
+        self.wtm = WindowBasedTM(dim, window_size, norm_type)
+        self.stm = SpaceBasedTM(dim, window_size, norm_type)
 
     def forward(self, x):
         """
@@ -556,7 +556,7 @@ class CausalSelfAttention_TSSA(nn.Module):
 
 ##########################################################################
 # ToST（Token Statistics Transformer）塊
-class ToSTBlock(nn.Module):
+class TokenStatisticsTransformer(nn.Module):
 
     def __init__(self, dim = 1024, norm_type='WithBias'):
         super().__init__()
@@ -564,7 +564,7 @@ class ToSTBlock(nn.Module):
         self.attn = CausalSelfAttention_TSSA(dim) # TSSA
         
         self.ln_2 = norms.Norm(dim, norm_type) # LayerNorm
-        self.mlp = MLP(dim)
+        self.mlp = MultiLayerPerception(dim)
         eta = torch.finfo(torch.float16).eps
         self.gamma1 = nn.Parameter(eta * torch.ones(dim), requires_grad=True)
         self.gamma2 = nn.Parameter(eta * torch.ones(dim), requires_grad=True)
@@ -610,7 +610,7 @@ def to_4d(x, h, w):
 
 ##########################################################################
 # MLP (flaoat16)
-class MLP(nn.Module):
+class MultiLayerPerceptron(nn.Module):
 
     def __init__(self, dim, dropout=0.1, bias=True):
         super().__init__()
