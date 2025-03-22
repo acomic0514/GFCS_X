@@ -77,4 +77,4 @@ class Norm(nn.Module):
         if self.norm_type == 'DyT':
             return to_4d(self.body(to_3d(x)), h, w)
         else :
-            return to_4d(self.body(to_3d(x).float()).half(), h, w)
+            return to_4d(self.body(to_3d(x).float()), h, w)

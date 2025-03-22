@@ -26,7 +26,6 @@ def load_config(file_path):
     config["num_workers"] = int(config["num_workers"])
     config["log_interval"] = int(config["log_interval"])
     config["use_amp"] = bool(config["use_amp"])
-    config["device"] = "cuda" if torch.cuda.is_available() else "cpu"
     
     return config
 
@@ -41,7 +40,7 @@ if __name__ == "__main__":
     # 創建模型
     model = GFCSNetwork(inp_channels=3, out_channels=3, dim=48)
     model.to(config["device"])
-    model.half()  # ✅ 確保模型參數使用 float16
+    # model.half()  # ✅ 確保模型參數使用 float16
 
     # 創建損失函數
     criterion = L1Loss().to(config["device"])
@@ -71,7 +70,7 @@ if __name__ == "__main__":
         pbar = tqdm(train_loader, desc=f"Epoch [{epoch+1}/{config['epochs']}]", ncols=100)
 
         for batch_idx, (input_img, target_img) in enumerate(pbar):
-            input_img, target_img = input_img.to(config["device"]).half(), target_img.to(config["device"]).half()  # ✅ 確保輸入是 float16
+            input_img, target_img = input_img.to(config["device"]), target_img.to(config["device"])  # ✅ 確保輸入是 float16
 
             optimizer.zero_grad()
 

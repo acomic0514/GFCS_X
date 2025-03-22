@@ -39,7 +39,7 @@ class MultiDconvHeadTransposedSA(nn.Module):
         4. 應用權重到 V 並輸出
         """
         _, _, h, w = x.shape
-        x = x.half()  # Convert to float16
+        # x = x.half()  # Convert to float16
 
         # 計算 Q, K, V
         qkv = self.qkv_dwconv(self.qkv(x))
@@ -56,7 +56,7 @@ class MultiDconvHeadTransposedSA(nn.Module):
 
         # 計算注意力分數 (使用愛因斯坦求和 `einsum`)
         attn = (q @ k.transpose(-2, -1)) * self.temperature
-        attn = attn.float().softmax(dim=-1).half()  # Softmax in float32 then convert back to float16
+        attn = attn.float().softmax(dim=-1) #.half()  # Softmax in float32 then convert back to float16
 
         # 計算加權輸出
         out = (attn @ v)
@@ -88,7 +88,7 @@ class GatedDconvFFNetwork(nn.Module):
         self.project_in = nn.Conv2d(dim, hidden_features * 2, kernel_size=1, bias=bias)
 
         # 3x3 深度可分離卷積
-        self.dwconv = nn.Conv2d(hidden_features * 2, hidden_features * 2,kernel_size=3, stride=1, padding=1, groups=hidden_features * 2, bias=bias,)
+        self.dwconv = nn.Conv2d(hidden_features * 2, hidden_features * 2,kernel_size=3, stride=1, padding=1, groups=hidden_features * 2, bias=bias)
 
         # 1x1 卷積壓縮通道數
         self.project_out = nn.Conv2d(hidden_features, dim, kernel_size=1, bias=bias)
@@ -101,10 +101,10 @@ class GatedDconvFFNetwork(nn.Module):
         3. `Gating Mechanism` 控制信息流
         4. `1x1 Conv` 降低維度
         """
-        x = x.half()  # Convert to float16
+        # x = x.half()  # Convert to float16
         x = self.project_in(x)
         x1, x2 = self.dwconv(x).chunk(2, dim=1)  # 拆分通道
-        x1 = nn.GELU()(x1.float()).half()  # GELU in float32 then convert back to float16
+        x1 = nn.GELU(approximate='tanh')(x1.float())  # GELU in float32 then convert back to float16
         x = x1 * x2  # 閘控機制
         x = self.project_out(x)
         return x
@@ -114,7 +114,7 @@ class GatedDconvFFNetwork(nn.Module):
 ##########################################################################
 # TransformerBlock
 class TransformerBlock(nn.Module):
-    def __init__(self, dim, num_heads, ffn_expansion_factor, bias, Norm_type):
+    def __init__(self, dim, num_heads, ffn_expansion_factor, bias, Norm_type, **kwargs):
         super(TransformerBlock, self).__init__()
 
         self.norm1 = norms.Norm(dim, Norm_type)

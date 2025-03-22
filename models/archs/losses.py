@@ -27,13 +27,13 @@ class L1Loss(nn.Module):
         Returns:
             Tensor: 計算後的 L1 Loss。
         """
-        pred, target = pred.half(), target.half() # 確保輸入是 float16
+        # pred, target = pred.half(), target.half() # 確保輸入是 float16
         loss = F.l1_loss(pred, target, reduction='none')  # 計算逐像素 L1 Loss
         
         # 如果提供了權重，則進行加權
         if weight is not None:
             assert weight.shape == loss.shape, "Weight tensor must have the same shape as loss tensor."
-            loss = loss * weight.half() # 確保權重也轉為 float16
+            loss = loss * weight# 確保權重也轉為 float16
 
         # 根據 reduction 進行縮減
         if self.reduction == 'mean':
