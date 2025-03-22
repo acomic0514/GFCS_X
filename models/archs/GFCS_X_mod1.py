@@ -5,7 +5,6 @@ import torch
 import torch.nn as nn
 from torch.utils.checkpoint import checkpoint_sequential
 import models.archs.modules as modules #導入組件
-from models.archs.norms import Norm  #導入組件
 
 
 def make_transformer_stack(**kwargs):

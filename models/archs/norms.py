@@ -17,9 +17,8 @@ class LayerNorm(nn.Module):
         self.bias = nn.Parameter(torch.zeros(dim)) if bias else None
 
     def forward(self, input):
-        input = input.float()
         output = F.layer_norm(input, self.weight.shape, self.weight, self.bias, 1e-5)
-        return output.half()
+        return output
 
 ##########################################################################
 # Dynamic Tanh (DyT)
@@ -34,34 +33,6 @@ class DynamicTanh(nn.Module):
         x = torch.tanh(self.alpha * x)
         return self.gamma.view(1, -1, 1, 1) * x + self.beta.view(1, -1, 1, 1)
    
-"""     
-##########################################################################
-#Layer Norm
-
-class BiasFreeLayerNorm(nn.Module):
-    
-    def __init__(self, normalized_shape: int):
-        super().__init__()
-        self.weight = nn.Parameter(torch.ones(normalized_shape))
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        sigma = x.var(dim=-1, keepdim=True, unbiased=False)
-        return x / torch.sqrt(sigma + 1e-5) * self.weight
-
-
-class WithBiasLayerNorm(nn.Module):
-    
-    def __init__(self, normalized_shape: int):
-        super().__init__()
-        self.weight = nn.Parameter(torch.ones(normalized_shape))
-        self.bias = nn.Parameter(torch.zeros(normalized_shape))
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        mu = x.mean(dim=-1, keepdim=True)
-        sigma = x.var(dim=-1, keepdim=True, unbiased=False)
-        return (x - mu) / torch.sqrt(sigma + 1e-5) * self.weight + self.bias
-"""
-
 ##########################################################################
 #Norm 方式選擇(可使用DyT)
 class Norm(nn.Module):
