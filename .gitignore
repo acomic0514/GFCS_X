@@ -10,5 +10,6 @@
 *.pyc
 *.part
 *.txt
+*.pyc
 data/train/
 data/test/

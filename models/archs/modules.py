@@ -46,7 +46,7 @@ class MultiDconvHeadTransposedSA(nn.Module):
         """
         super().__init__()
         self.num_heads = num_heads
-        self.temperature = nn.Parameter(torch.ones(1, num_heads, 1, 1),dtype = dtype)  # 確保形狀與注意力權重匹配
+        self.temperature = nn.Parameter(torch.ones(1, num_heads, 1, 1))  # 確保形狀與注意力權重匹配
 
         # Query, Key, Value 計算
         self.qkv = nn.Conv2d(dim, dim * 3, kernel_size=1, bias=bias, dtype=dtype)
@@ -70,7 +70,7 @@ class MultiDconvHeadTransposedSA(nn.Module):
         """
         _, _, h, w = x.shape
         x = x.to(torch.float16)  # 確保整個過程使用 float16
-        with torch.cuda.amp.autocast():  # ✅ AMP 自動管理精度
+        with torch.amp.autocast('cuda'):  # ✅ AMP 自動管理精度
         
             # 計算 Q, K, V
             qkv = self.qkv_dwconv(self.qkv(x))
@@ -141,7 +141,7 @@ class GatedDconvFFN(nn.Module):
         4. `1x1 Conv` 降低維度
         """
         x = x.to(torch.float16)  # 確保整個過程使用 float16
-        with torch.cuda.amp.autocast():  # ✅ AMP 自動管理精度
+        with torch.amp.autocast('cuda'):  # ✅ AMP 自動管理精度
             x = self.project_in(x)
             x1, x2 = self.dwconv(x).chunk(2, dim=1)  # 拆分通道
             x = torch.mul(F.gelu(x1), x2)  # 閘控機制
@@ -153,7 +153,7 @@ class GatedDconvFFN(nn.Module):
 ##########################################################################
 # TransformerBlock
 class TransformerBlock(nn.Module):
-    def __init__(self, dim, num_heads, ffn_expansion_factor, bias, Norm_type):
+    def __init__(self, dim, num_heads, ffn_expansion_factor, bias, Norm_type, **kwargs):
         super(TransformerBlock, self).__init__()
 
         self.norm1 = norms.Norm(dim, Norm_type)
@@ -164,7 +164,7 @@ class TransformerBlock(nn.Module):
     def forward(self, x):
         x = x.to(torch.float16)  # 確保整個過程使用 float16
         _, _, H, W = x.shape
-        with torch.cuda.amp.autocast():  # ✅ AMP 自動管理精度
+        with torch.amp.autocast('cuda'):  # ✅ AMP 自動管理精度
             x = x + self.MDTA(to_4d(self.norm1(to_3d(x)), H, W))
             x = x + self.GDFN(to_4d(self.norm2(to_3d(x)), H, W))
 
@@ -313,7 +313,7 @@ class RelativePositionEnhancedSA(nn.Module):
         x = x.to(torch.float16)  # 確保計算在 float16 上執行
         B, N, C = x.shape
         
-        with torch.cuda.amp.autocast():  # ✅ AMP 自動管理精度
+        with torch.amp.autocast('cuda'):  # ✅ AMP 自動管理精度
             qkv = self.qkv_proj(x).reshape(B, N, self.num_heads, 3 * self.head_dim)
             q, k, v = qkv.chunk(3, dim=-1)
             
@@ -345,7 +345,7 @@ class LocalEnhancedFFN(nn.Module):
         x = x.to(torch.float16)  # 確保運算在 float16
         B, C, H, W = x.shape
         
-        with torch.cuda.amp.autocast():  # ✅ AMP 自動管理精度
+        with torch.amp.autocast('cuda'):  # ✅ AMP 自動管理精度
             x = self.pointwise_conv(x)  # 1x1 卷積
             x = self.depthwise_conv(x)  # 深度可分離 3x3 卷積
             
@@ -381,7 +381,7 @@ class WindowBasedTM(nn.Module):
         x = x.to(torch.float16)  # 確保整個過程使用 float16
         _, _, H, W = x.shape
         
-        with torch.cuda.amp.autocast():  # ✅ AMP 自動管理精度
+        with torch.amp.autocast('cuda'):  # ✅ AMP 自動管理精度
             x_norm = to_4d(self.norm1(to_3d(x)), H, W)  # 正規化
             x_windows = window_partition(x_norm, self.window_size) # 窗口切割
             
@@ -416,7 +416,7 @@ class SpaceBasedTM(nn.Module):
         x = x.to(torch.float16)  # 確保整個過程使用 float16
         _, _, H, W = x.shape
         
-        with torch.cuda.amp.autocast():  # ✅ AMP 自動管理精度        
+        with torch.amp.autocast('cuda'):  # ✅ AMP 自動管理精度        
             x_norm = to_4d(self.norm1(to_3d(x)), H, W) # 正規化
             x_windows = window_partition(x_norm, self.window_size) # 窗口切割
             x_windows = window_to_token(x_windows, self.window_size) # Token 合併
@@ -449,7 +449,7 @@ class ImageDerainingTransformer(nn.Module):
         x: (B, C, H, W) - 影像特徵圖
         return: (B, C, H, W) - 經過 WTM 和 STM 處理的影像特徵圖
         """
-        with torch.cuda.amp.autocast():  # ✅ AMP 自動管理精度
+        with torch.amp.autocast('cuda'):  # ✅ AMP 自動管理精度
             x = self.wtm(x)  # 先經過 WTM
             x = self.stm(x)  # 再經過 STM
         return x
@@ -485,7 +485,7 @@ class DegradationAwareMoE(nn.Module):
         x = x.to(dtype=torch.float16)  # 確保輸入為 float16
         b, _, _, _ = x.shape
         
-        with torch.cuda.amp.autocast():  # ✅ AMP 自動管理精度
+        with torch.amp.autocast('cuda'):  # ✅ AMP 自動管理精度
             # 通道平均池化計算 z_c
             z_c = x.mean(dim=[2, 3])  # (B, C)
             
@@ -531,7 +531,7 @@ class CausalSelfAttention_TSSA(nn.Module):
         x = x.to(torch.float16) # 確保計算在 float16 上執行
         B, N, C = x.shape # batch size, sequence length, embedding dimensionality (dim)
 
-        with torch.cuda.amp.autocast():  # ✅ AMP 自動管理精度
+        with torch.amp.autocast('cuda'):  # ✅ AMP 自動管理精度
             # calculate query, key, values for all heads in batch and move head forward to be the batch dim
             w = self.c_attn(x).view(B, N, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
             w_sq = w ** 2
@@ -564,7 +564,7 @@ class TokenStatisticsTransformer(nn.Module):
         self.attn = CausalSelfAttention_TSSA(dim) # TSSA
         
         self.ln_2 = norms.Norm(dim, norm_type) # LayerNorm
-        self.mlp = MultiLayerPerception(dim)
+        self.mlp = MultiLayerPerceptron(dim)
         eta = torch.finfo(torch.float16).eps
         self.gamma1 = nn.Parameter(eta * torch.ones(dim), requires_grad=True)
         self.gamma2 = nn.Parameter(eta * torch.ones(dim), requires_grad=True)
@@ -576,7 +576,7 @@ class TokenStatisticsTransformer(nn.Module):
         x = x.to(torch.float16)  # 確保整個過程使用 float16
         _, _, H, W = x.shape
         
-        with torch.cuda.amp.autocast():  # ✅ AMP 自動管理精度        
+        with torch.amp.autocast('cuda'):  # ✅ AMP 自動管理精度        
             x = x + self.gamma1.view(1, -1, 1, 1) *to_4d(self.attn(self.ln_1(to_3d(x))), H, W)
             x = x + self.gamma2.view(1, -1, 1, 1) *to_4d(self.mlp(self.ln_2(to_3d(x))), H, W)
         return x
@@ -620,7 +620,7 @@ class MultiLayerPerceptron(nn.Module):
 
     def forward(self, x):
         x = x.to(torch.float16)
-        with torch.cuda.amp.autocast():  # ✅ AMP 自動管理精度
+        with torch.amp.autocast('cuda'):  # ✅ AMP 自動管理精度
             x = self.c_fc(x)
             x = F.gelu(x)
             x = self.c_proj(x)
