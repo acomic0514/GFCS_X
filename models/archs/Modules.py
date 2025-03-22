@@ -37,7 +37,7 @@ Token statistics transformer
 ##########################################################################
 # Multi-DConv Head Transposed Self-Attention (MDTA)
 class MDTA(nn.Module):
-    def __init__(self, dim: int, num_heads: int, bias: bool = False):
+    def __init__(self, dim: int, num_heads: int, bias: bool = False, dtype=torch.float16):
         """
         Multi-DConv Head Transposed Self-Attention (MDTA)
         :param dim: 通道維度
@@ -46,17 +46,17 @@ class MDTA(nn.Module):
         """
         super().__init__()
         self.num_heads = num_heads
-        self.temperature = nn.Parameter(torch.ones(1, num_heads, 1, 1))  # 確保形狀與注意力權重匹配
+        self.temperature = nn.Parameter(torch.ones(1, num_heads, 1, 1),dtype = dtype)  # 確保形狀與注意力權重匹配
 
         # Query, Key, Value 計算
-        self.qkv = nn.Conv2d(dim, dim * 3, kernel_size=1, bias=bias)
+        self.qkv = nn.Conv2d(dim, dim * 3, kernel_size=1, bias=bias, dtype=dtype)
         self.qkv_dwconv = nn.Conv2d(dim * 3, dim * 3, 
                                     kernel_size=3, stride=1, 
                                     padding=1, groups=dim * 3, 
-                                    bias=bias)
+                                    bias=bias, dtype=dtype)
 
         # 輸出投影
-        self.project_out = nn.Conv2d(dim, dim, kernel_size=1, bias=bias)
+        self.project_out = nn.Conv2d(dim, dim, kernel_size=1, bias=bias, dtype=dtype)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -69,33 +69,35 @@ class MDTA(nn.Module):
         4. 應用權重到 V 並輸出
         """
         _, _, h, w = x.shape
+        x = x.to(torch.float16)  # 確保整個過程使用 float16
+        with torch.cuda.amp.autocast():  # ✅ AMP 自動管理精度
         
-        # 計算 Q, K, V
-        qkv = self.qkv_dwconv(self.qkv(x))
-        q, k, v = qkv.chunk(3, dim=1)  # 拆分為 Q, K, V
+            # 計算 Q, K, V
+            qkv = self.qkv_dwconv(self.qkv(x))
+            q, k, v = qkv.chunk(3, dim=1)  # 拆分為 Q, K, V
 
-        # 重新排列形狀以適應多頭注意力
-        q = rearrange(q, 'b (head c) h w -> b head c (h w)', head=self.num_heads)
-        k = rearrange(k, 'b (head c) h w -> b head c (h w)', head=self.num_heads)
-        v = rearrange(v, 'b (head c) h w -> b head c (h w)', head=self.num_heads)
+            # 重新排列形狀以適應多頭注意力
+            q = rearrange(q, 'b (head c) h w -> b head c (h w)', head=self.num_heads)
+            k = rearrange(k, 'b (head c) h w -> b head c (h w)', head=self.num_heads)
+            v = rearrange(v, 'b (head c) h w -> b head c (h w)', head=self.num_heads)
 
-        # 對 Q, K 進行 L2 正規化，防止數值過大
-        q = F.normalize(q, dim=-1)
-        k = F.normalize(k, dim=-1)
+            # 對 Q, K 進行 L2 正規化，防止數值過大
+            q = F.normalize(q, dim=-1)
+            k = F.normalize(k, dim=-1)
 
-        # 計算注意力分數 (使用愛因斯坦求和 `einsum`)
-        attn = (q @ k.transpose(-2, -1)) * self.temperature
-        attn = attn.float().softmax(dim=-1).half()  # Softmax 運算仍然使用 float32 再轉回 float16
+            # 計算注意力分數 (使用愛因斯坦求和 `einsum`)
+            attn = (q @ k.transpose(-2, -1)) * self.temperature
+            attn = attn.softmax(dim=-1)  
 
-        # 計算加權輸出
-        out = (attn @ v)
+            # 計算加權輸出
+            out = (attn @ v)
 
-        # 恢復輸出形狀
-        out = rearrange(out, 'b head c (h w) -> b (head c) h w', 
-                        head=self.num_heads, h=h, w=w)
+            # 恢復輸出形狀
+            out = rearrange(out, 'b head c (h w) -> b (head c) h w', 
+                            head=self.num_heads, h=h, w=w)
 
-        # 最終輸出
-        out = self.project_out(out)
+            # 最終輸出
+            out = self.project_out(out)
         return out
 
 
@@ -138,11 +140,12 @@ class GDFN(nn.Module):
         3. `Gating Mechanism` 控制信息流
         4. `1x1 Conv` 降低維度
         """
-        x = self.project_in(x)
-        x1, x2 = self.dwconv(x).chunk(2, dim=1)  # 拆分通道
-        x1 = F.gelu(x1.float()).half() # GELU 在 float32 下計算
-        x = torch.mul(x1, x2)  # 閘控機制
-        x = self.project_out(x)
+        x = x.to(torch.float16)  # 確保整個過程使用 float16
+        with torch.cuda.amp.autocast():  # ✅ AMP 自動管理精度
+            x = self.project_in(x)
+            x1, x2 = self.dwconv(x).chunk(2, dim=1)  # 拆分通道
+            x = torch.mul(F.gelu(x1), x2)  # 閘控機制
+            x = self.project_out(x)
         return x
 
 
@@ -161,8 +164,9 @@ class TransformerBlock(nn.Module):
     def forward(self, x):
         x = x.to(torch.float16)  # 確保整個過程使用 float16
         _, _, H, W = x.shape
-        x = x + self.MDTA(to_4d(self.norm1(to_3d(x)), H, W))
-        x = x + self.GDFN(to_4d(self.norm2(to_3d(x)), H, W))
+        with torch.cuda.amp.autocast():  # ✅ AMP 自動管理精度
+            x = x + self.MDTA(to_4d(self.norm1(to_3d(x)), H, W))
+            x = x + self.GDFN(to_4d(self.norm2(to_3d(x)), H, W))
 
         return x
     
@@ -269,16 +273,16 @@ class REMSA(nn.Module):
         self.out_proj = nn.Linear(dim, dim, dtype)
         
         # 位置關聯的偏置矩陣，使用可學習的相對位置編碼
-        self.position_bias = nn.Parameter(torch.randn(1, num_heads, 1, 1, dtype) * 0.01)  # 允許學習且非對稱
+        self.position_bias = nn.Parameter(torch.randn((1, num_heads, 1, 1), dtype = dtype) * 0.01)  # 允許學習且非對稱
         
         # 額外的深度卷積分支
         self.conv_proj = nn.Linear(dim, dim, dtype)
-        self.pointwise_conv = nn.Conv1d(in_channels=dim, out_channels=dim, kernel_size=1, groups=1).to(dtype)
-        self.depthwise_conv = nn.Conv1d(in_channels=dim, out_channels=dim, kernel_size=3, padding=1, groups=dim).to(dtype)
+        self.pointwise_conv = nn.Conv1d(in_channels=dim, out_channels=dim, kernel_size=1, groups=1, dtype=dtype)
+        self.depthwise_conv = nn.Conv1d(in_channels=dim, out_channels=dim, kernel_size=3, padding=1, groups=dim, dtype=dtype)
         self.token_wise_proj = nn.Linear(dim, dim, dtype)
     
     def scaled_dot_product_attention(self, q, k, v):
-        q, k, v = q.to(torch.float16), k.to(torch.float16), v.to(torch.float16) # 確保計算在 float16 上執行 
+        q, k, v = q, k, v # 確保計算在 float16 上執行 
         attn_scores = torch.matmul(q, k.transpose(-2, -1)) * self.scale
         
         B, num_heads, seq_len, _ = attn_scores.shape # 確保 position_bias 與 attn_scores 形狀匹配
@@ -287,7 +291,7 @@ class REMSA(nn.Module):
                                               requires_grad=True).to(q.device)
             
         attn_scores = attn_scores + self.position_bias  # 加上學習到的位置偏置矩陣
-        attn_weights = F.softmax(attn_scores.to(torch.float32), dim=-1).to(torch.float16)  # Softmax 運算在 float32 上執行
+        attn_weights = F.softmax(attn_scores, dim=-1)  # Softmax 運算在 float32 上執行
         
         return torch.matmul(attn_weights, v)
     
@@ -307,18 +311,19 @@ class REMSA(nn.Module):
         
         #self-attntion 分支
         x = x.to(torch.float16)  # 確保計算在 float16 上執行
-        batch_size, seq_length, dim = x.shape
+        B, N, C = x.shape
         
-        qkv = self.qkv_proj(x).reshape(batch_size, seq_length, self.num_heads, 3 * self.head_dim)
-        q, k, v = qkv.chunk(3, dim=-1)
-        
-        attn_output = self.scaled_dot_product_attention(q, k, v)
-        attn_output = attn_output.reshape(batch_size, seq_length, dim)
-        attn_output = self.out_proj(attn_output)
-        
-        # 卷積分支
-        conv_output = self.convolutional_branch(x)
-        
+        with torch.cuda.amp.autocast():  # ✅ AMP 自動管理精度
+            qkv = self.qkv_proj(x).reshape(B, N, self.num_heads, 3 * self.head_dim)
+            q, k, v = qkv.chunk(3, dim=-1)
+            
+            attn_output = self.scaled_dot_product_attention(q, k, v)
+            attn_output = attn_output.reshape(B, N, C)
+            attn_output = self.out_proj(attn_output)
+            
+            # 卷積分支
+            conv_output = self.convolutional_branch(x)
+            
         return (attn_output + conv_output).to(torch.float16)  
 
 
@@ -327,31 +332,32 @@ class REMSA(nn.Module):
 class LeFF(nn.Module):
     def __init__(self, dim, dtype=torch.float16):
         super().__init__()
-        self.pointwise_conv = nn.Conv2d(dim, dim, kernel_size=1, bias=False).to(dtype)  # 1x1 卷積
-        self.depthwise_conv = nn.Conv2d(dim, dim, kernel_size=3, padding=1, groups=dim).to(dtype)  # 深度可分離卷積
-        self.fc1 = nn.Linear(dim, dim * 4, dtype)
-        self.fc2 = nn.Linear(dim * 4, dim, dtype)
+        self.pointwise_conv = nn.Conv2d(dim, dim, kernel_size=1, bias=False, dtype=dtype)  # 1x1 卷積
+        self.depthwise_conv = nn.Conv2d(dim, dim, kernel_size=3, padding=1, groups=dim, dtype=dtype)  # 深度可分離卷積
+        self.fc1 = nn.Linear(dim, dim * 4, dtype = dtype)
+        self.fc2 = nn.Linear(dim * 4, dim, dtype = dtype)
 
     def forward(self, x):
         """
         x: (B, C, H, W) - 輸入特徵圖
         return: (B, C, H, W) - 輸出特徵圖
         """
-        B, C, H, W = x.shape
         x = x.to(torch.float16)  # 確保運算在 float16
+        B, C, H, W = x.shape
         
-        x = self.pointwise_conv(x)  # 1x1 卷積
-        x = self.depthwise_conv(x)  # 深度可分離 3x3 卷積
-        
-        x = x.permute(0, 2, 3, 1)  # 轉換為 (B, H, W, C)
-        x = x.view(B, H * W, C)  # 轉換為 (B, N, C) 以符合 fc1
-        
-        x = self.fc1(x)
-        x = F.gelu(x.to(torch.float32)).to(torch.float16)  # GELU 運算在 float32 上
-        x = self.fc2(x)
-        
-        x = x.view(B, H, W, C) # 轉換為 (B, H, W, C)
-        x = x.permute(0, 3, 1, 2)  # 轉回 (B, C, H, W)
+        with torch.cuda.amp.autocast():  # ✅ AMP 自動管理精度
+            x = self.pointwise_conv(x)  # 1x1 卷積
+            x = self.depthwise_conv(x)  # 深度可分離 3x3 卷積
+            
+            x = x.permute(0, 2, 3, 1)  # 轉換為 (B, H, W, C)
+            x = x.view(B, H * W, C)  # 轉換為 (B, N, C) 以符合 fc1
+            
+            x = self.fc1(x)
+            x = F.gelu(x.to(torch.float32)).to(torch.float16)  # GELU 運算在 float32 上
+            x = self.fc2(x)
+            
+            x = x.view(B, H, W, C) # 轉換為 (B, H, W, C)
+            x = x.permute(0, 3, 1, 2)  # 轉回 (B, C, H, W)
         
         return x
 
@@ -375,17 +381,18 @@ class WTM(nn.Module):
         x = x.to(torch.float16)  # 確保整個過程使用 float16
         _, _, H, W = x.shape
         
-        x_norm = to_4d(self.norm1(to_3d(x)), H, W)  # 正規化
-        x_windows = window_partition(x_norm, self.window_size) # 窗口切割
-        
-        # 直接對窗口內像素執行自注意力
-        remsa_output = self.remsa(x_windows) # REMSA 計算
-        remsa_output = window_merge(remsa_output, H, W, self.window_size)  # 正確還原形狀
-        # 殘差連接
-        x = x + remsa_output
-        
-        # LeFF 計算 + 殘差連接
-        x = x + self.leff(to_4d(self.norm2(to_3d(x)), H, W))
+        with torch.cuda.amp.autocast():  # ✅ AMP 自動管理精度
+            x_norm = to_4d(self.norm1(to_3d(x)), H, W)  # 正規化
+            x_windows = window_partition(x_norm, self.window_size) # 窗口切割
+            
+            # 直接對窗口內像素執行自注意力
+            remsa_output = self.remsa(x_windows) # REMSA 計算
+            remsa_output = window_merge(remsa_output, H, W, self.window_size)  # 正確還原形狀
+            # 殘差連接
+            x = x + remsa_output
+            
+            # LeFF 計算 + 殘差連接
+            x = x + self.leff(to_4d(self.norm2(to_3d(x)), H, W))
         
         return x
     
@@ -409,19 +416,20 @@ class STM(nn.Module):
         x = x.to(torch.float16)  # 確保整個過程使用 float16
         _, _, H, W = x.shape
         
-        x_norm = to_4d(self.norm1(to_3d(x)), H, W) # 正規化
-        x_windows = window_partition(x_norm, self.window_size) # 窗口切割
-        x_windows = window_to_token(x_windows, self.window_size) # Token 合併
-        
-        # 直接對窗口內像素執行自注意力
-        remsa_output = self.remsa(x_windows) # REMSA 計算
-        remsa_output = token_to_window(remsa_output, H, W, self.window_size) # 正確還原形狀
-        
-        # 殘差連接
-        x = x + remsa_output
-        
-        # LeFF 計算 + 殘差連接
-        x = x + self.leff(to_4d(self.norm2(to_3d(x)), H, W))
+        with torch.cuda.amp.autocast():  # ✅ AMP 自動管理精度        
+            x_norm = to_4d(self.norm1(to_3d(x)), H, W) # 正規化
+            x_windows = window_partition(x_norm, self.window_size) # 窗口切割
+            x_windows = window_to_token(x_windows, self.window_size) # Token 合併
+            
+            # 直接對窗口內像素執行自注意力
+            remsa_output = self.remsa(x_windows) # REMSA 計算
+            remsa_output = token_to_window(remsa_output, H, W, self.window_size) # 正確還原形狀
+            
+            # 殘差連接
+            x = x + remsa_output
+            
+            # LeFF 計算 + 殘差連接
+            x = x + self.leff(to_4d(self.norm2(to_3d(x)), H, W))
         
         return x  
     
@@ -441,8 +449,9 @@ class IDT(nn.Module):
         x: (B, C, H, W) - 影像特徵圖
         return: (B, C, H, W) - 經過 WTM 和 STM 處理的影像特徵圖
         """
-        x = self.wtm(x)  # 先經過 WTM
-        x = self.stm(x)  # 再經過 STM
+        with torch.cuda.amp.autocast():  # ✅ AMP 自動管理精度
+            x = self.wtm(x)  # 先經過 WTM
+            x = self.stm(x)  # 再經過 STM
         return x
 
 """Hybrid CNN-Transformer Feature Fusion for Single Image Deraining"""
@@ -476,19 +485,20 @@ class DegradationAwareMoE(nn.Module):
         x = x.to(dtype=torch.float16)  # 確保輸入為 float16
         b, _, _, _ = x.shape
         
-        # 通道平均池化計算 z_c
-        z_c = x.mean(dim=[2, 3])  # (B, C)
-        
-        # 使用 W1, W2 計算專家權重（使用 float32 避免數值不穩定）
-        weights = self.W2(F.relu(self.W1(z_c)))  # (B, num_experts)
-        weights = torch.softmax(weights, dim=1).to(dtype=torch.float16)  # 應用 softmax，然後轉回 float16
-        
-        # 計算專家輸出
-        expert_outputs = torch.stack([expert(x) for expert in self.experts], dim=1)  # (B, num_experts, C, H, W)
-        mixture = torch.sum(weights.view(b, -1, 1, 1, 1) * expert_outputs, dim=1)  # (B, C, H, W)
-        
-        # 1×1 卷積處理後再加上殘差連接
-        output = self.final_conv(mixture) + x
+        with torch.cuda.amp.autocast():  # ✅ AMP 自動管理精度
+            # 通道平均池化計算 z_c
+            z_c = x.mean(dim=[2, 3])  # (B, C)
+            
+            # 使用 W1, W2 計算專家權重（使用 float32 避免數值不穩定）
+            weights = self.W2(F.relu(self.W1(z_c)))  # (B, num_experts)
+            weights = torch.softmax(weights, dim=1).to(dtype=torch.float16)  # 應用 softmax，然後轉回 float16
+            
+            # 計算專家輸出
+            expert_outputs = torch.stack([expert(x) for expert in self.experts], dim=1)  # (B, num_experts, C, H, W)
+            mixture = torch.sum(weights.view(b, -1, 1, 1, 1) * expert_outputs, dim=1)  # (B, C, H, W)
+            
+            # 1×1 卷積處理後再加上殘差連接
+            output = self.final_conv(mixture) + x
         return output.to(dtype=torch.float16)
 
 """Token statistics transformer: linear-time attention via variational rate reduction"""
@@ -563,10 +573,12 @@ class ToSTBlock(nn.Module):
         x: (B, C, H, W) - 影像特徵圖
         return: (B, C, H, W) - 經過 ToST 處理的影像特徵圖
         """
+        x = x.to(torch.float16)  # 確保整個過程使用 float16
         _, _, H, W = x.shape
         
-        x = x + self.gamma1.view(1, -1, 1, 1) *to_4d(self.attn(self.ln_1(to_3d(x))), H, W)
-        x = x + self.gamma2.view(1, -1, 1, 1) *to_4d(self.mlp(self.ln_2(to_3d(x))), H, W)
+        with torch.cuda.amp.autocast():  # ✅ AMP 自動管理精度        
+            x = x + self.gamma1.view(1, -1, 1, 1) *to_4d(self.attn(self.ln_1(to_3d(x))), H, W)
+            x = x + self.gamma2.view(1, -1, 1, 1) *to_4d(self.mlp(self.ln_2(to_3d(x))), H, W)
         return x
 
     
