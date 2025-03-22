@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange
-import models.archs.Norms as Norms
+import models.archs.norms as norms
 
 """
 組件目錄
@@ -156,9 +156,9 @@ class TransformerBlock(nn.Module):
     def __init__(self, dim, num_heads, ffn_expansion_factor, bias, Norm_type):
         super(TransformerBlock, self).__init__()
 
-        self.norm1 = Norms.Norm(dim, Norm_type)
+        self.norm1 = norms.Norm(dim, Norm_type)
         self.MDTA = MDTA(dim, num_heads, bias)
-        self.norm2 = Norms.Norm(dim, Norm_type)
+        self.norm2 = norms.Norm(dim, Norm_type)
         self.GDFN = GDFN(dim, ffn_expansion_factor, bias)
 
     def forward(self, x):
@@ -368,9 +368,9 @@ class WTM(nn.Module):
         super().__init__()
         self.num_heads = auto_num_heads(dim)  # 自動計算 num_heads
         self.window_size = window_size
-        self.norm1 = Norms.Norm(dim, norm_type)
+        self.norm1 = norms.Norm(dim, norm_type)
         self.remsa = REMSA(dim, self.num_heads)
-        self.norm2 = Norms.Norm(dim, norm_type)
+        self.norm2 = norms.Norm(dim, norm_type)
         self.leff = LeFF(dim)
         
     def forward(self, x):
@@ -403,9 +403,9 @@ class STM(nn.Module):
         super().__init__()
         self.num_heads = auto_num_heads(dim)  # 自動計算 num_heads
         self.window_size = window_size
-        self.norm1 = Norms.Norm(dim, norm_type)
+        self.norm1 = norms.Norm(dim, norm_type)
         self.remsa = REMSA(dim, self.num_heads)
-        self.norm2 = Norms.Norm(dim, norm_type)
+        self.norm2 = norms.Norm(dim, norm_type)
         self.leff = LeFF(dim)
         
     def forward(self, x):
@@ -560,10 +560,10 @@ class ToSTBlock(nn.Module):
 
     def __init__(self, dim = 1024, norm_type='WithBias'):
         super().__init__()
-        self.ln_1 = Norms.Norm(dim, norm_type) # LayerNorm
+        self.ln_1 = norms.Norm(dim, norm_type) # LayerNorm
         self.attn = CausalSelfAttention_TSSA(dim) # TSSA
         
-        self.ln_2 = Norms.Norm(dim, norm_type) # LayerNorm
+        self.ln_2 = norms.Norm(dim, norm_type) # LayerNorm
         self.mlp = MLP(dim)
         eta = torch.finfo(torch.float16).eps
         self.gamma1 = nn.Parameter(eta * torch.ones(dim), requires_grad=True)
