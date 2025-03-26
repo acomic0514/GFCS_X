@@ -66,4 +66,4 @@ class DPENet_CFIM(nn.Module):
         x = self.outconv3(x)
         x_final = x + x_rain_removed  # Residual connection
         
-        return x_rain_removed, x_final
+        return x_final #如果需要輸出除雨中間結果x_rain_removed要再調整

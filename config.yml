@@ -1,6 +1,6 @@
-epochs: 100  # 訓練輪數
-batch_size: 8  # 每批次處理的圖片數
-lr: 3e-4  # 初始學習率
+epochs: 10  # 訓練輪數
+batch_size: 16  # 每批次處理的圖片數
+lr: 1e-3  # 初始學習率
 eta_min: 1e-6  # 最小學習率
 periods: [92000, 208000]  # 餘弦衰減週期
 restart_weights: [1, 1]  # 週期重啟時的學習率比例
@@ -9,3 +9,5 @@ num_workers: 4  # DataLoader 進程數
 checkpoint_dir: "checkpoints"  # 存放模型
 log_interval: 10  # 幾個 batch 記錄一次 Loss
 use_amp: True  # 是否使用混合精度
+grad_clip: 1.0 #梯度裁剪
+dataset_name: 'Rain13K'
