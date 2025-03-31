@@ -120,12 +120,11 @@ class RainDataset(Dataset):
         return (input_img, target_img) if target_img is not None else input_img
 
 
-def get_transform(train=True): #mean, std, 
-    input_mean = [0.5110453963279724, 0.5104997158050537, 0.4877311885356903]
-    input_std = [0.23112213611602783, 0.23167330026626587, 0.23953330516815186]
-
-    target_mean = [0.43193507194519043, 0.43070125579833984, 0.4052175283432007]
-    target_std = [0.24484442174434662, 0.2445715367794037, 0.25179967284202576]
+def get_transform(mean, std, train=True): #
+    # input_mean = [0.5110453963279724, 0.5104997158050537, 0.4877311885356903]
+    # input_std = [0.23112213611602783, 0.23167330026626587, 0.23953330516815186]
+    # target_mean = [0.43193507194519043, 0.43070125579833984, 0.4052175283432007]
+    # target_std = [0.24484442174434662, 0.2445715367794037, 0.25179967284202576]
     
     if train:
         return transforms.Compose([
@@ -133,13 +132,11 @@ def get_transform(train=True): #mean, std,
             transforms.RandomRotation(10),  # 隨機旋轉 ±10 度
             transforms.RandomResizedCrop(256, scale=(0.8, 1.0)),  # 隨機裁剪
             transforms.ToTensor(),  # 轉換為 Tensor
-            transforms.Normalize(mean=input_mean, std=input_std),  # 標準化
-            #transforms.Normalize(mean=mean.tolist(), std=std.tolist())  # 標準化
+            transforms.Normalize(mean=mean.tolist(), std=std.tolist())  # 標準化
         ])
     else:
         return transforms.Compose([
             #transforms.Resize((256, 256)),  # 測試時直接縮放到 256x256
             transforms.ToTensor(),
-            transforms.Normalize(mean=input_mean, std=input_std),  # 標準化
-            #transforms.Normalize(mean=mean.tolist(), std=std.tolist())  # 標準化
+            transforms.Normalize(mean=mean.tolist(), std=std.tolist())  # 標準化
         ])
