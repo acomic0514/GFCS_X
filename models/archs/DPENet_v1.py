@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from models.archs.modules import DDRB, ERPAB
+import models.archs.norms as norms
 
 ##########################################################################
 # DPENet_v1 without CFIM
@@ -27,20 +28,28 @@ class DPENet(nn.Module):
         # Shared ERPAB instance
         self.erpab = nn.Sequential(*[ERPAB(mid_channels, mid_channels, kernel, stride, dilation_list, bias) for _ in range(3)])
 
+        
 
     def forward(self, x):
         input_ = x
+        
+        # Dynamic Tanh
+        DynamicTanh = norms.DynamicTanh(normalized_shape=x.shape[1])
         
         # Stage 1: Initial Rain Streaks Removal
         x = self.inconv1(x)
         rs1 = self.ddrb(x)
         x = self.outconv1(rs1)
-        x_mid = x + input_  # Residual connection
+        x_mid = F.tanh(x + input_)  # Apply Tanh activation
         
         # Stage 2: Initial Detail Reconstruction
         x = self.inconv2(F.relu(x_mid))
         dr1 = self.erpab(x)
         x = self.outconv2(dr1)
-        x_final = x + x_mid  # Residual connection
-
-        return x_final
+        x_final = F.tanh(x + x_mid)
+                
+        return x_mid, x_final
+    
+        # if self.check_nan_inf(x_final, "x_final"):
+        #     break_flag = True
+        #return x_mid, x_final , break_flag

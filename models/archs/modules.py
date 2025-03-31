@@ -589,8 +589,12 @@ class DDRB(nn.Module):
                  kernel=3,
                  stride=1,
                  d=[1, 2, 5],
-                 bias=False):
+                 bias=False,
+                 Norm_type='DyT'):
         super(DDRB, self).__init__()
+        
+        self.norm1 = norms.Norm(in_channels, Norm_type)
+                
         self.convD1 = nn.Sequential(
                 nn.Conv2d(in_channels, mid_channels, kernel, stride, padding=d[0], dilation=d[0], bias=bias),
                 nn.ReLU(inplace=True),
@@ -616,12 +620,12 @@ class DDRB(nn.Module):
         Usage:
             enhanced_feature = DDRB(input_feature)
         """
-        with torch.cuda.amp.autocast():
+        with torch.amp.autocast('cuda'):
             x1 = self.convD1(x)
             x2 = self.convD2(x+x1)
             x3 = self.convD3(x+x1+x2)
-       
-        return x + x1 + x2 + x3
+            output = self.norm1(x + x1 + x2 + x3)
+        return output
     
 ##########################################################################
 # enhanced residual pixel-wise attention block (ERPAB)

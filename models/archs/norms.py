@@ -30,8 +30,13 @@ class DynamicTanh(nn.Module):
         self.beta = nn.Parameter(torch.zeros(normalized_shape))
         
     def forward(self, x):
-        x = torch.tanh(self.alpha * x)
-        return self.gamma.view(1, -1, 1, 1) * x + self.beta.view(1, -1, 1, 1)
+        # ✅ 確保所有參數都在與 `x` 相同的設備
+        alpha = self.alpha.to(x.device)
+        gamma = self.gamma.to(x.device)
+        beta = self.beta.to(x.device)
+        
+        x = torch.tanh(alpha * x)
+        return gamma.view(1, -1, 1, 1) * x + beta.view(1, -1, 1, 1)
    
 ##########################################################################
 #Norm 方式選擇(可使用DyT)

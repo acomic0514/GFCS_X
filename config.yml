@@ -1,4 +1,4 @@
-epochs: 10  # 訓練輪數
+epochs: 100  # 訓練輪數
 batch_size: 16  # 每批次處理的圖片數
 lr: 1e-3  # 初始學習率
 eta_min: 1e-6  # 最小學習率
