@@ -99,51 +99,52 @@ def check_nan_inf(x, comment=""):
                 problematic_indices.append(i)
         print(f"❌ comment: {comment}")
         print(f"❌ 有問題的圖片索引：{problematic_indices}")
-        print(f"❌ 有問題得圖片數值為：{x[problematic_indices]}")
-        print(f"❌ 有問題的圖片最大數值為：{x.max().item()}")
+        # print(f"❌ 有問題得圖片數值為：{x[problematic_indices]}")
+        print(f"❌ 有問題的圖片最大數值為：{x[problematic_indices].max().item()}")
+        print(f"❌ 有問題的圖片最小數值為：{x[problematic_indices].min().item()}")
         
         return True
 #
 
 def _ssim(img1, img2, window, window_size, channel, size_average=True):
-    check_nan_inf(img1, "img1")
-    check_nan_inf(img2, "img2")
+    # check_nan_inf(img1, "img1")
+    # check_nan_inf(img2, "img2")
     
     mu1 = F.conv2d(img1, window, padding=window_size // 2, groups=channel)
-    check_nan_inf(mu1, "mu1")
+    # check_nan_inf(mu1, "mu1")
     
     mu2 = F.conv2d(img2, window, padding=window_size // 2, groups=channel)
-    check_nan_inf(mu2, "mu2")
+    # check_nan_inf(mu2, "mu2")
 
     mu1_sq = mu1.pow(2)
-    check_nan_inf(mu1_sq, "mu1_sq")
+    # check_nan_inf(mu1_sq, "mu1_sq")
     
     mu2_sq = mu2.pow(2)
-    check_nan_inf(mu2_sq, "mu2_sq")
+    # check_nan_inf(mu2_sq, "mu2_sq")
     
     mu1_mu2 = mu1 * mu2
-    check_nan_inf(mu1_mu2, "mu1_mu2")
+    # check_nan_inf(mu1_mu2, "mu1_mu2")
 
     sigma1_sq_conv = F.conv2d(img1 * img1, window, padding=window_size // 2, groups=channel)
-    check_nan_inf(sigma1_sq_conv, "sigma1_sq_conv")
+    # check_nan_inf(sigma1_sq_conv, "sigma1_sq_conv")
     sigma1_sq = sigma1_sq_conv - mu1_sq
-    check_nan_inf(sigma1_sq, "sigma1_sq")
+    # check_nan_inf(sigma1_sq, "sigma1_sq")
     
     sigma2_sq_conv = F.conv2d(img2 * img2, window, padding=window_size // 2, groups=channel)
-    check_nan_inf(sigma2_sq_conv, "sigma2_sq_conv")
+    # check_nan_inf(sigma2_sq_conv, "sigma2_sq_conv")
     sigma2_sq = sigma2_sq_conv - mu2_sq
-    check_nan_inf(sigma1_sq, "sigma1_sq")
+    # check_nan_inf(sigma1_sq, "sigma1_sq")
     
     sigma12_conv = F.conv2d(img1 * img2, window, padding=window_size // 2, groups=channel)
-    check_nan_inf(sigma12_conv, "sigma12_conv")
+    # check_nan_inf(sigma12_conv, "sigma12_conv")
     sigma12 = sigma12_conv - mu1_mu2
-    check_nan_inf(sigma12, "sigma12")
+    # check_nan_inf(sigma12, "sigma12")
     
     C1 = 0.01 ** 2
     C2 = 0.03 ** 2
 
     ssim_map = ((2 * mu1_mu2 + C1) * (2 * sigma12 + C2)) / ((mu1_sq + mu2_sq + C1) * (sigma1_sq + sigma2_sq + C2))
-    check_nan_inf(ssim_map, "ssim_map")
+    # check_nan_inf(ssim_map, "ssim_map")
 
     if size_average:
         return ssim_map.mean()

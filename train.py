@@ -30,6 +30,13 @@ def load_config(file_path):
     
     return config
 
+def denormalize(tensor, mean, std):
+    """
+    反歸一化 Tensor 將 Normalize(mean, std) 轉回原始範圍
+    """
+    mean = torch.tensor(mean).view(1, -1, 1, 1).to(tensor.device)  # 調整 shape 以匹配輸入
+    std = torch.tensor(std).view(1, -1, 1, 1).to(tensor.device)
+    return tensor * std + mean  # 反歸一化
 
 if __name__ == "__main__":
     # Load configuration from YAML file

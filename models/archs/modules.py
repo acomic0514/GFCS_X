@@ -589,12 +589,8 @@ class DDRB(nn.Module):
                  kernel=3,
                  stride=1,
                  d=[1, 2, 5],
-                 bias=False,
-                 Norm_type='DyT'):
-        super(DDRB, self).__init__()
-        
-        self.norm1 = norms.Norm(in_channels, Norm_type)
-                
+                 bias=False):
+        super(DDRB, self).__init__()                
         self.convD1 = nn.Sequential(
                 nn.Conv2d(in_channels, mid_channels, kernel, stride, padding=d[0], dilation=d[0], bias=bias),
                 nn.ReLU(inplace=True),
@@ -622,9 +618,9 @@ class DDRB(nn.Module):
         """
         with torch.amp.autocast('cuda'):
             x1 = self.convD1(x)
-            x2 = self.convD2(x+x1)
-            x3 = self.convD3(x+x1+x2)
-            output = self.norm1(x + x1 + x2 + x3)
+            x2 = self.convD2(F.relu(x+x1))
+            x3 = self.convD3(F.relu(x+x1+x2))
+            output = F.relu(x+x1+x2+x3)
         return output
     
 ##########################################################################
@@ -654,9 +650,9 @@ class ERPAB(nn.Module):
         self.attn_map = nn.Sequential(
             nn.Conv2d(mid_channels, 1, kernel_size=3, padding=1, bias=False),
             nn.ReLU(inplace=True),
-            nn.Conv2d(1, in_channels, kernel_size=3, padding=1, bias=False)
+            nn.Conv2d(1, in_channels, kernel_size=3, padding=1, bias=False),
+            nn.Sigmoid()
         )
-        self.sigmoid = nn.Sigmoid()
     
     def forward(self, x):
         """
@@ -669,10 +665,15 @@ class ERPAB(nn.Module):
         """
         with torch.cuda.amp.autocast():
             expert_outputs = torch.cat([expert(x) for expert in self.experts], dim=1)
-            x1 = F.relu(self.conv1(expert_outputs))
+            x1 = self.conv1(expert_outputs)
+            #x1 = F.relu(x1)
             attn_map = self.attn_map(x1)
+            x1 = F.relu(x1 * attn_map + x)  # 殘差連接
+        return x1
+        #     x1 = F.relu(self.conv1(expert_outputs))
+        #     attn_map = self.attn_map(x1)
 
-        return x + x1 * self.sigmoid(attn_map)
+        # return x + x1 * self.sigmoid(attn_map)
 
 ##########################################################################
 # cross-stage feature interaction module (CFIM)
