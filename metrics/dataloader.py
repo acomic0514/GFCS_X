@@ -6,6 +6,7 @@ from torch.utils.data import Dataset
 from torchvision import transforms
 from PIL import Image
 from pathlib import Path
+import random
 
 
 # 自動找到 `GFCS_X` 目錄
@@ -124,8 +125,8 @@ class RainDataset(Dataset):
 def get_transform(train=True): 
     if train:
         return transforms.Compose([
-            transforms.RandomHorizontalFlip(),  # 隨機水平翻轉
-            transforms.RandomRotation(10),  # 隨機旋轉 ±10 度
+            # transforms.RandomHorizontalFlip(),  # 隨機水平翻轉
+            # transforms.RandomRotation(10),  # 隨機旋轉 ±10 度
             transforms.RandomResizedCrop(256, scale=(0.8, 1.0)),  # 隨機裁剪
             transforms.ToTensor(),  # 轉換為 Tensor
             #transforms.Normalize(mean=mean.tolist(), std=std.tolist())  # 標準化

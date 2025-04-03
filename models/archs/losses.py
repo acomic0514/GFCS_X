@@ -139,9 +139,9 @@ def _ssim(img1, img2, window, window_size, channel, size_average=True):
     # check_nan_inf(sigma12_conv, "sigma12_conv")
     sigma12 = sigma12_conv - mu1_mu2
     # check_nan_inf(sigma12, "sigma12")
-    
-    C1 = 0.01 ** 2
-    C2 = 0.03 ** 2
+    L = 1/3
+    C1 = (0.01 * L) ** 2
+    C2 = (0.03 * L) ** 2 
 
     ssim_map = ((2 * mu1_mu2 + C1) * (2 * sigma12 + C2)) / ((mu1_sq + mu2_sq + C1) * (sigma1_sq + sigma2_sq + C2))
     # check_nan_inf(ssim_map, "ssim_map")

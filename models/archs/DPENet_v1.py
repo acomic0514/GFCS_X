@@ -13,20 +13,46 @@ class DPENet(nn.Module):
                  kernel=3,
                  stride=1,
                  dilation_list=[1, 2, 5],
-                 bias=False):
+                 bias=False,
+                 init_alpha=0.5,
+                 init_beta=0.5):
         super(DPENet, self).__init__()
+        
+        self.alpha1 = nn.Parameter(torch.tensor(init_alpha))
+        self.beta1 = nn.Parameter(torch.tensor(init_beta))
+        self.alpha2 = nn.Parameter(torch.tensor(init_alpha))
+        self.beta2 = nn.Parameter(torch.tensor(init_beta))
 
         # Initial feature transformation
-        self.inconv1 = nn.Conv2d(in_channels, mid_channels, kernel_size=1, padding=0, bias=bias)
-        self.outconv1 = nn.Conv2d(mid_channels, in_channels, kernel_size=1, padding=0, bias=bias)
-        self.inconv2 = nn.Conv2d(in_channels, mid_channels, kernel_size=1, padding=0, bias=bias)
-        self.outconv2 = nn.Conv2d(mid_channels, in_channels, kernel_size=1, padding=0, bias=bias)
-
+        self.inconv1 = nn.Sequential(
+            nn.Conv2d(in_channels, mid_channels, 
+                      kernel_size=1, padding=0, bias=bias),
+            nn.ReLU(inplace=True),
+        )
+        self.outconv1 = nn.Sequential(
+            nn.Conv2d(mid_channels, in_channels, 
+                      kernel_size=1, padding=0, bias=bias),
+            # nn.ReLU(inplace=True),
+            # nn.Tanh(),  # Apply Tanh activation
+        )
+        """
+        self.inconv2 = nn.Sequential(
+            nn.Conv2d(in_channels, mid_channels, 
+                      kernel_size=1, padding=0, bias=bias),
+            nn.ReLU(inplace=True),
+        )
+        self.outconv2 = nn.Sequential(
+            nn.Conv2d(mid_channels, in_channels, 
+                      kernel_size=1, padding=0, bias=bias),
+            # nn.ReLU(inplace=True),
+            # nn.Tanh(),  # Apply Tanh activation
+        )
+        """
         # Network Modules
-        self.ddrb = nn.Sequential(*[DDRB(mid_channels, mid_channels, kernel, stride, dilation_list, bias) for _ in range(5)])
+        self.ddrb = nn.Sequential(*[DDRB(mid_channels, mid_channels, kernel, stride, dilation_list, bias) for _ in range(10)])
 
         # Shared ERPAB instance
-        self.erpab = nn.Sequential(*[ERPAB(mid_channels, mid_channels, kernel, stride, dilation_list, bias) for _ in range(3)])
+        # self.erpab = nn.Sequential(*[ERPAB(mid_channels, mid_channels, kernel, stride, dilation_list, bias) for _ in range(3)])
 
         
 
@@ -41,10 +67,15 @@ class DPENet(nn.Module):
         # self.check_nan_inf(rs1, "rs1")
         x = self.outconv1(rs1)
         # self.check_nan_inf(x, "x_outconv1")
-        x_mid = x + input_  # Apply Tanh activation
-        # x_mid =F.sigmoid(x + input_)  # Apply Tanh activation
+        # x_mid = torch.sigmoid(self.alpha1 * (x + input_) + self.beta1)
+        # x_mid = x + input_
+        # x_mid =F.sigmoid(x + input_)  #sigmoid遮罩
+        # x_mid = x + input_  
+        x_mid = input_ - x # 減法遮罩
+        # x_mid = F.tanh(x) + input_ 
         # self.check_nan_inf(x_mid, "x_mid")
         
+        """
         # Stage 2: Initial Detail Reconstruction
         x = self.inconv2(F.relu(x_mid))
         # self.check_nan_inf(x, "x_inconv2")
@@ -52,11 +83,14 @@ class DPENet(nn.Module):
         # self.check_nan_inf(dr1, "dr1")
         x = self.outconv2(dr1)
         # self.check_nan_inf(x, "x_outconv2")
-        x_final = x + x_mid
+        
+        # x_final = torch.sigmoid(self.alpha2 * (x + x_mid ) + self.beta2)
+        # x_final = x + x_mid
+        x_final = F.tanh(x) + x_mid
         # x_final = F.sigmoid(x + x_mid)
         # self.check_nan_inf(x_final, "x_final")
-
-        return x_mid, x_final
+        """
+        return F.relu(x_mid) #, x_final
     
         # if self.check_nan_inf(x_final, "x_final"):
             # break_flag = True

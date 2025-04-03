@@ -592,19 +592,25 @@ class DDRB(nn.Module):
                  bias=False):
         super(DDRB, self).__init__()                
         self.convD1 = nn.Sequential(
-                nn.Conv2d(in_channels, mid_channels, kernel, stride, padding=d[0], dilation=d[0], bias=bias),
+                nn.Conv2d(in_channels, mid_channels, kernel, 
+                          stride, padding=d[0], dilation=d[0], bias=bias),
                 nn.ReLU(inplace=True),
-                nn.Conv2d(mid_channels, mid_channels, kernel, stride, padding=d[0], dilation=d[0], bias=bias)
+                nn.Conv2d(mid_channels, mid_channels, kernel, 
+                          stride, padding=d[0], dilation=d[0], bias=bias)
             ) # dilation=1
         self.convD2 = nn.Sequential(
-                nn.Conv2d(in_channels, mid_channels, kernel, stride, padding=d[1], dilation=d[1], bias=bias),
+                nn.Conv2d(in_channels, mid_channels, kernel, 
+                          stride, padding=d[1], dilation=d[1], bias=bias),
                 nn.ReLU(inplace=True),
-                nn.Conv2d(mid_channels, mid_channels, kernel, stride, padding=d[1], dilation=d[1], bias=bias)
+                nn.Conv2d(mid_channels, mid_channels, kernel, 
+                          stride, padding=d[1], dilation=d[1], bias=bias)
             ) # dilation=2
         self.convD3 = nn.Sequential(
-                nn.Conv2d(in_channels, mid_channels, kernel, stride, padding=d[2], dilation=d[2], bias=bias),
+                nn.Conv2d(in_channels, mid_channels, kernel, 
+                          stride, padding=d[2], dilation=d[2], bias=bias),
                 nn.ReLU(inplace=True),
-                nn.Conv2d(mid_channels, mid_channels, kernel, stride, padding=d[2], dilation=d[2], bias=bias)
+                nn.Conv2d(mid_channels, mid_channels, kernel, 
+                          stride, padding=d[2], dilation=d[2], bias=bias)
             ) # dilation=5
             
     def forward(self, x):
@@ -616,11 +622,11 @@ class DDRB(nn.Module):
         Usage:
             enhanced_feature = DDRB(input_feature)
         """
-        with torch.amp.autocast('cuda'):
-            x1 = self.convD1(x)
-            x2 = self.convD2(F.relu(x+x1))
-            x3 = self.convD3(F.relu(x+x1+x2))
-            output = F.relu(x+x1+x2+x3)
+        # with torch.amp.autocast('cuda'):
+        x1 = self.convD1(x)
+        x2 = self.convD2(F.relu(x+x1))
+        x3 = self.convD3(F.relu(x+x1+x2))
+        output = F.relu(x+x1+x2+x3)
         return output
     
 ##########################################################################
@@ -641,16 +647,23 @@ class ERPAB(nn.Module):
         super(ERPAB, self).__init__()
         
         self.experts = nn.ModuleList([
-            nn.Conv2d(in_channels, mid_channels, kernel, stride, padding=d[0], dilation=d[0], bias=bias),  # C32D1
-            nn.Conv2d(in_channels, mid_channels, kernel, stride, padding=d[1], dilation=d[1], bias=bias),  # C32D2
-            nn.Conv2d(in_channels, mid_channels, kernel, stride, padding=d[2], dilation=d[2], bias=bias),  # C32D5
+            nn.Conv2d(in_channels, mid_channels, kernel, stride, 
+                      padding=d[0], dilation=d[0], bias=bias),  # C32D1
+            nn.Conv2d(in_channels, mid_channels, kernel, stride, 
+                      padding=d[1], dilation=d[1], bias=bias),  # C32D2
+            nn.Conv2d(in_channels, mid_channels, kernel, stride, 
+                      padding=d[2], dilation=d[2], bias=bias),  # C32D5
         ])
         
-        self.conv1 = nn.Conv2d(mid_channels*3, mid_channels, kernel_size=3, padding=1, bias=False)
-        self.attn_map = nn.Sequential(
+        self.conv1 = nn.Sequential(
+            nn.Conv2d(mid_channels * 3, in_channels, kernel_size=1, stride=stride, padding=0, bias=True),
+            nn.ReLU(inplace=True)
+        )
+
+        self.pa = nn.Sequential(
             nn.Conv2d(mid_channels, 1, kernel_size=3, padding=1, bias=False),
             nn.ReLU(inplace=True),
-            nn.Conv2d(1, in_channels, kernel_size=3, padding=1, bias=False),
+            nn.Conv2d(1, mid_channels, kernel_size=3, padding=1, bias=False),
             nn.Sigmoid()
         )
     
@@ -663,12 +676,11 @@ class ERPAB(nn.Module):
         Usage:
             enhanced_feature = ERPAB(input_feature)
         """
-        with torch.cuda.amp.autocast():
-            expert_outputs = torch.cat([expert(x) for expert in self.experts], dim=1)
-            x1 = self.conv1(expert_outputs)
-            #x1 = F.relu(x1)
-            attn_map = self.attn_map(x1)
-            x1 = F.relu(x1 * attn_map + x)  # 殘差連接
+        # with torch.amp.autocast('cuda'):
+        expert_outputs = torch.cat([expert(x) for expert in self.experts], dim=1)
+        x1 = self.conv1(expert_outputs)
+        pa = self.pa(x1)
+        x1 = F.relu(x1 * pa + x)  # 殘差連接
         return x1
         #     x1 = F.relu(self.conv1(expert_outputs))
         #     attn_map = self.attn_map(x1)
