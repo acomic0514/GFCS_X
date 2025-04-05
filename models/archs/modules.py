@@ -594,21 +594,21 @@ class DDRB(nn.Module):
         self.convD1 = nn.Sequential(
                 nn.Conv2d(in_channels, mid_channels, kernel, 
                           stride, padding=d[0], dilation=d[0], bias=bias),
-                nn.ReLU(inplace=True),
+                nn.ReLU(inplace=False),
                 nn.Conv2d(mid_channels, mid_channels, kernel, 
                           stride, padding=d[0], dilation=d[0], bias=bias)
             ) # dilation=1
         self.convD2 = nn.Sequential(
                 nn.Conv2d(in_channels, mid_channels, kernel, 
                           stride, padding=d[1], dilation=d[1], bias=bias),
-                nn.ReLU(inplace=True),
+                nn.ReLU(inplace=False),
                 nn.Conv2d(mid_channels, mid_channels, kernel, 
                           stride, padding=d[1], dilation=d[1], bias=bias)
             ) # dilation=2
         self.convD3 = nn.Sequential(
                 nn.Conv2d(in_channels, mid_channels, kernel, 
                           stride, padding=d[2], dilation=d[2], bias=bias),
-                nn.ReLU(inplace=True),
+                nn.ReLU(inplace=False),
                 nn.Conv2d(mid_channels, mid_channels, kernel, 
                           stride, padding=d[2], dilation=d[2], bias=bias)
             ) # dilation=5

@@ -10,4 +10,4 @@ checkpoint_dir: "checkpoints"  # 存放模型
 log_interval: 10  # 幾個 batch 記錄一次 Loss
 use_amp: True  # 是否使用混合精度
 grad_clip: 1.0 #梯度裁剪
-dataset_name: 'Rain13K'
+dataset_name: 'Rain13k'
