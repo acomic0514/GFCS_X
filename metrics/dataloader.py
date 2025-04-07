@@ -7,7 +7,9 @@ from torchvision import transforms
 from PIL import Image
 from pathlib import Path
 import random
-
+import numpy as np
+import pandas as pd
+import re  # 新增：正則化模組用於語意標註
 
 # 自動找到 `GFCS_X` 目錄
 GFCS_X_ROOT = Path(__file__).resolve().parent.parent  # `metrics` 的上級目錄
@@ -116,7 +118,8 @@ class RainDataset(Dataset):
         # 轉換圖像
         if self.transform:
             input_img = self.transform(input_img)
-            target_img = self.transform(target_img) if target_img else None
+            if target_img is not None and self.transform is not None:
+                target_img = self.transform(target_img)
 
         return (input_img, target_img) if target_img is not None else input_img
 
@@ -127,7 +130,7 @@ def get_transform(train=True):
         return transforms.Compose([
             # transforms.RandomHorizontalFlip(),  # 隨機水平翻轉
             # transforms.RandomRotation(10),  # 隨機旋轉 ±10 度
-            transforms.RandomResizedCrop(256, scale=(0.8, 1.0)),  # 隨機裁剪
+            # transforms.RandomResizedCrop(256, scale=(0.8, 1.0)),  # 隨機裁剪
             transforms.ToTensor(),  # 轉換為 Tensor
             #transforms.Normalize(mean=mean.tolist(), std=std.tolist())  # 標準化
         ])
@@ -137,3 +140,44 @@ def get_transform(train=True):
             transforms.ToTensor(),
             #transforms.Normalize(mean=mean.tolist(), std=std.tolist())  # 標準化
         ])
+
+###########################################################################
+# Save trace data to CSV
+def save_trace_dict_to_csv(trace_dict, prefix_dir="trace_output"):
+    os.makedirs(prefix_dir, exist_ok=True)
+    for name, value in trace_dict.items():
+        if isinstance(value, np.ndarray):
+            print(f"📁 正在儲存: {name}, shape: {value.shape}, ndim: {value.ndim}")  
+            # 🔍 加入語意化命名提示
+            semantic_name = name
+            semantic_name = semantic_name.replace("inconv1", "input_projection")
+            semantic_name = semantic_name.replace("outconv1", "output_projection")
+            semantic_name = semantic_name.replace("convD1", "ddrb_branch1")
+            semantic_name = semantic_name.replace("convD2", "ddrb_branch2")
+            semantic_name = semantic_name.replace("convD3", "ddrb_branch3")
+            
+            if value.ndim == 2:
+                df = pd.DataFrame(value)
+                df.to_csv(os.path.join(prefix_dir, f"{name}.csv"), index=False)
+            elif value.ndim == 3:
+                for c in range(value.shape[0]):
+                    df = pd.DataFrame(value[c])
+                    df.to_csv(os.path.join(prefix_dir, f"{name}_ch{c}.csv"), index=False)
+            elif value.ndim == 4:
+                if "output" in name:
+                    with open(os.path.join(prefix_dir, f"{semantic_name}.csv"), "w") as f:
+                        C = value.shape[1]
+                        for ch in range(C):
+                            f.write(f"# {semantic_name}_ch{ch}\n")
+                            np.savetxt(f, value[0, ch], delimiter=",", fmt="%.6f")
+                            f.write("\n")
+                elif "weight" in name:
+                    for out_c in range(value.shape[0]):
+                        with open(os.path.join(prefix_dir, f"{semantic_name}_out{out_c}.csv"), "w") as f:
+                            for in_c in range(value.shape[1]):
+                                f.write(f"# in_channel {in_c}\n")
+                                np.savetxt(f, value[out_c, in_c], delimiter=",", fmt="%.6f")
+                                f.write("\n")
+                                f.write("# ---------------------------------------------\n")
+                else:
+                    np.save(os.path.join(prefix_dir, f"{semantic_name}.npy"), value)
