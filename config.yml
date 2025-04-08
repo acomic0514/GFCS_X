@@ -1,4 +1,4 @@
-epochs: 1  # 訓練輪數
+epochs: 100  # 訓練輪數
 batch_size: 1  # 每批次處理的圖片數
 lr: 1e-3  # 初始學習率
 eta_min: 1e-6  # 最小學習率
@@ -8,8 +8,8 @@ device: "cuda" # if torch.cuda.is_available() else "cpu"
 num_workers: 4  # DataLoader 進程數
 checkpoint_dir: "checkpoints"  # 存放模型
 log_interval: 10  # 幾個 batch 記錄一次 Loss
-use_amp: True  # 是否使用混合精度
+use_amp: False  # 是否使用混合精度
 grad_clip: 1.0 #梯度裁剪
-dataset_name: 'Rain1'
+dataset_name: 'Rain13K'
 save_trace: true
 trace_output_dir: trace_results

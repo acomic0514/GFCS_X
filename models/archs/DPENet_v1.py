@@ -33,7 +33,7 @@ class DPENet(nn.Module):
             nn.Conv2d(mid_channels, in_channels, 
                       kernel_size=1, padding=0, bias=bias),
             # nn.ReLU(inplace=False),
-            nn.Tanh(),  # Apply Tanh activation
+            # nn.Tanh(),  # Apply Tanh activation
         )
         """
         self.inconv2 = nn.Sequential(
@@ -49,7 +49,7 @@ class DPENet(nn.Module):
         )
         """
         # Network Modules
-        self.ddrb = nn.Sequential(*[DDRB(mid_channels, mid_channels, kernel, stride, dilation_list, bias) for _ in range(1)])
+        self.ddrb = nn.Sequential(*[DDRB(mid_channels, mid_channels, kernel, stride, dilation_list, bias) for _ in range(5)])
 
         # Shared ERPAB instance
         # self.erpab = nn.Sequential(*[ERPAB(mid_channels, mid_channels, kernel, stride, dilation_list, bias) for _ in range(3)])
@@ -67,11 +67,10 @@ class DPENet(nn.Module):
         # self.check_nan_inf(rs1, "rs1")
         x = self.outconv1(rs1)
         # self.check_nan_inf(x, "x_outconv1")
-        # x_mid = torch.sigmoid(self.alpha1 * (x + input_) + self.beta1)
-        # x_mid =F.sigmoid(x + input_)  #sigmoid遮罩
-        x_mid = x + input_  
+        x_mid = F.relu(x + input_) 
         # x_mid = input_ - x # 減法遮罩
-        # x_mid = F.tanh(x) + input_ 
+        # x_mid =F.sigmoid(x + input_)  # sigmoid遮罩
+        # x_mid = F.tanh(x) + input_  # tanh遮罩
         # self.check_nan_inf(x_mid, "x_mid")
         
         """
@@ -89,7 +88,7 @@ class DPENet(nn.Module):
         # x_final = F.sigmoid(x + x_mid)
         # self.check_nan_inf(x_final, "x_final")
         """
-        return x_mid, x #, x_final
+        return x_mid #, x_final
     
         # if self.check_nan_inf(x_final, "x_final"):
             # break_flag = True
