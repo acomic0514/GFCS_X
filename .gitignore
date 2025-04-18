@@ -13,3 +13,4 @@
 *.pyc
 data/train/
 data/test/
+checkpoints/

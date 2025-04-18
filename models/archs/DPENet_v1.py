@@ -33,9 +33,9 @@ class DPENet(nn.Module):
             nn.Conv2d(mid_channels, in_channels, 
                       kernel_size=1, padding=0, bias=bias),
             # nn.ReLU(inplace=False),
-            # nn.Tanh(),  # Apply Tanh activation
+            nn.Tanh(),  # Apply Tanh activation
         )
-        """
+        
         self.inconv2 = nn.Sequential(
             nn.Conv2d(in_channels, mid_channels, 
                       kernel_size=1, padding=0, bias=bias),
@@ -45,14 +45,14 @@ class DPENet(nn.Module):
             nn.Conv2d(mid_channels, in_channels, 
                       kernel_size=1, padding=0, bias=bias),
             # nn.ReLU(),
-            # nn.Tanh(),  # Apply Tanh activation
+            nn.Tanh(),  # Apply Tanh activation
         )
-        """
+        
         # Network Modules
-        self.ddrb = nn.Sequential(*[DDRB(mid_channels, mid_channels, kernel, stride, dilation_list, bias) for _ in range(5)])
+        self.ddrb = nn.Sequential(*[DDRB(mid_channels, mid_channels, kernel, stride, dilation_list, bias) for _ in range(10)])
 
         # Shared ERPAB instance
-        # self.erpab = nn.Sequential(*[ERPAB(mid_channels, mid_channels, kernel, stride, dilation_list, bias) for _ in range(3)])
+        self.erpab = nn.Sequential(*[ERPAB(mid_channels, mid_channels, kernel, stride, dilation_list, bias) for _ in range(3)])
 
         
 
@@ -67,13 +67,15 @@ class DPENet(nn.Module):
         # self.check_nan_inf(rs1, "rs1")
         x = self.outconv1(rs1)
         # self.check_nan_inf(x, "x_outconv1")
-        x_mid = F.relu(x + input_) 
+        # x_mid = F.relu(x + input_)
+        x_mid = x + input_ 
         # x_mid = input_ - x # 減法遮罩
+        # x_mid = input_ - F.sigmoid(x) # 減法s遮罩
         # x_mid =F.sigmoid(x + input_)  # sigmoid遮罩
         # x_mid = F.tanh(x) + input_  # tanh遮罩
         # self.check_nan_inf(x_mid, "x_mid")
         
-        """
+        
         # Stage 2: Initial Detail Reconstruction
         x = self.inconv2(F.relu(x_mid))
         # self.check_nan_inf(x, "x_inconv2")
@@ -83,12 +85,14 @@ class DPENet(nn.Module):
         # self.check_nan_inf(x, "x_outconv2")
         
         # x_final = torch.sigmoid(self.alpha2 * (x + x_mid ) + self.beta2)
-        # x_final = x + x_mid
-        x_final = F.tanh(x) + x_mid
+        x_final = x + x_mid
+        # x_final = x_mid - x  # 減法遮罩
+        # x_final = F.tanh(x) + x_mid
+        # x_final = F.relu(x + x_mid)
         # x_final = F.sigmoid(x + x_mid)
         # self.check_nan_inf(x_final, "x_final")
-        """
-        return x_mid #, x_final
+        
+        return x_mid , x_final
     
         # if self.check_nan_inf(x_final, "x_final"):
             # break_flag = True

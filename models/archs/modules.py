@@ -657,12 +657,12 @@ class ERPAB(nn.Module):
         
         self.conv1 = nn.Sequential(
             nn.Conv2d(mid_channels * 3, in_channels, kernel_size=1, stride=stride, padding=0, bias=True),
-            nn.ReLU(inplace=True)
+            nn.ReLU(inplace=False)
         )
 
         self.pa = nn.Sequential(
             nn.Conv2d(mid_channels, 1, kernel_size=3, padding=1, bias=False),
-            nn.ReLU(inplace=True),
+            nn.ReLU(inplace=False),
             nn.Conv2d(1, mid_channels, kernel_size=3, padding=1, bias=False),
             nn.Sigmoid()
         )
@@ -677,11 +677,12 @@ class ERPAB(nn.Module):
             enhanced_feature = ERPAB(input_feature)
         """
         # with torch.amp.autocast('cuda'):
+        input_ = x
         expert_outputs = torch.cat([expert(x) for expert in self.experts], dim=1)
         x1 = self.conv1(expert_outputs)
         pa = self.pa(x1)
-        x1 = F.relu(x1 * pa + x)  # 殘差連接
-        return x1
+        output = F.relu(x1 * pa + input_)  # 殘差連接
+        return output
         #     x1 = F.relu(self.conv1(expert_outputs))
         #     attn_map = self.attn_map(x1)
 

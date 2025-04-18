@@ -1,5 +1,9 @@
-epochs: 100  # 訓練輪數
-batch_size: 1  # 每批次處理的圖片數
+#組件驗證+訓練參數調整區
+epochs: 200  # 訓練輪數
+batch_size: 18  # 每批次處理的圖片數
+dataset_name: 'Rain13K'
+
+#訓練參數調整區
 lr: 1e-3  # 初始學習率
 eta_min: 1e-6  # 最小學習率
 periods: [92000, 208000]  # 餘弦衰減週期
@@ -10,6 +14,6 @@ checkpoint_dir: "checkpoints"  # 存放模型
 log_interval: 10  # 幾個 batch 記錄一次 Loss
 use_amp: False  # 是否使用混合精度
 grad_clip: 1.0 #梯度裁剪
-dataset_name: 'Rain13K'
+testset_name: 'Rain100L'
 save_trace: true
 trace_output_dir: trace_results

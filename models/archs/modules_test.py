@@ -123,3 +123,83 @@ def extract_all_trace_data(seq, prefix):
             results[f"{prefix}_layer{i}_bias"] = layer.bias
     return results
 
+############################################################################
+# Trace the output of a layer during the forward pass
+class ERPAB_Traceable(nn.Module):
+    """ 
+    Enhanced Residual Pixel-wise Attention Block 
+    Usage:
+        self.erpab = ERPAB(in_channels=32, mid_channels=32, kernel=3, stride=1, d=[1, 2, 5], bias=False)
+    """
+    def __init__(self,
+                 in_channels=3,
+                 mid_channels=3,
+                 kernel=3,
+                 stride=1,
+                 d=[1, 2, 5],
+                 bias=False):
+        super(ERPAB_Traceable, self).__init__()
+        
+        self.experts = nn.ModuleList([
+            TraceLayer(nn.Conv2d(in_channels, mid_channels, kernel, stride, 
+                      padding=d[0], dilation=d[0], bias=bias)),  # C32D1
+            TraceLayer(nn.Conv2d(in_channels, mid_channels, kernel, stride, 
+                      padding=d[1], dilation=d[1], bias=bias)),  # C32D2
+            TraceLayer(nn.Conv2d(in_channels, mid_channels, kernel, stride, 
+                      padding=d[2], dilation=d[2], bias=bias)),  # C32D5
+        ])
+        
+        self.conv1 = nn.Sequential(
+            TraceLayer(nn.Conv2d(mid_channels * 3, in_channels, kernel_size=1, stride=stride, padding=0, bias=True)),
+            # nn.ReLU(inplace=False)
+        )
+
+        self.pa = nn.Sequential(
+            TraceLayer(nn.Conv2d(mid_channels, 1, kernel_size=3, padding=1, bias=False)),
+            TraceLayer(nn.ReLU(inplace=False)),
+            TraceLayer(nn.Conv2d(1, mid_channels, kernel_size=3, padding=1, bias=False)),
+            TraceLayer(nn.Sigmoid())
+        )
+    
+    def forward(self, x):
+        """
+        Args:
+            x: input feature map
+        Returns:
+            enhanced feature map
+        Usage:
+            enhanced_feature = ERPAB(input_feature)
+        """
+        # with torch.amp.autocast('cuda'):
+        input_ = x
+        expert_outputs = torch.cat([expert(x) for expert in self.experts], dim=1)
+        x1 = self.conv1(expert_outputs)
+        pa = self.pa(x1)
+        output = F.relu(x1 * pa + input_)  # 殘差連接
+        
+        features = {
+                "input": x.detach().cpu().numpy(),
+
+                # 對 experts 中三層 TraceLayer 抽取
+                **{f"experts_layer{i}_output": expert.output
+                for i, expert in enumerate(self.experts)
+                if hasattr(expert, "output")},
+
+                **{f"experts_layer{i}_weight": expert.weight
+                for i, expert in enumerate(self.experts)
+                if hasattr(expert, "weight")},
+
+                **{f"experts_layer{i}_bias": expert.bias
+                for i, expert in enumerate(self.experts)
+                if hasattr(expert, "bias")},
+
+                # conv1 是 Sequential
+                **extract_all_trace_data(self.conv1, "conv1"),
+
+                # pa 是 Sequential
+                **extract_all_trace_data(self.pa, "pa"),
+
+                "output": output.detach().cpu().numpy()
+            }
+        
+        return output , features
