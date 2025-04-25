@@ -9,6 +9,9 @@ import pandas as pd
 
 # Import modules
 from models.archs.DPENet_v1 import DPENet
+from models.archs.DPENet_v2 import DPENet_CFIM
+from models.archs.DPENet_v3 import DPENet_CFIM_v2
+from models.archs.DPE_Unet import DPE_Unet
 from models.archs.losses import SSIMLoss_v2, EdgeLoss_v2, L1Loss
 from models.CosineAnnealingRestartCyclicLR import CosineAnnealingRestartCyclicLR
 
@@ -60,8 +63,8 @@ def _visualize_results(input_img, mid_output, final_output, target_img, title_pr
     plt.show()
 """
    
-def log_sample_to_tensorboard(writer, input_img, mid_output, final_output, target_img, epoch, prefix="Train"):
-# def log_sample_to_tensorboard(writer, input_img, mid_output, target_img, epoch, prefix="Train"):
+# def log_sample_to_tensorboard(writer, input_img, mid_output, final_output, target_img, epoch, prefix="Train"):
+def log_sample_to_tensorboard(writer, input_img, mid_output, target_img, epoch, prefix="Train"):
     def preprocess(tensor):
         return tensor.clamp(0, 1).detach().cpu()
 
@@ -69,14 +72,64 @@ def log_sample_to_tensorboard(writer, input_img, mid_output, final_output, targe
     imgs = [
         preprocess(input_img[0]),
         preprocess(mid_output[0]),
-        preprocess(final_output[0]),
+        # preprocess(final_output[0]),
         preprocess(target_img[0]),
     ]
 
     # 組成 grid [4*C, H, W] 並加一個 batch 維度
-    grid = make_grid(imgs, nrow=4)  # [C, H, W]
-    # grid = make_grid(imgs, nrow=3)  # [C, H, W]
+    # grid = make_grid(imgs, nrow=4)  # [C, H, W]
+    grid = make_grid(imgs, nrow=3)  # [C, H, W]
     writer.add_image(f"{prefix}/Sample_Epoch_{epoch}", grid, global_step=epoch)
+    
+def sliding_window_inference(img_tensor: torch.Tensor, model, patch_size=(128, 128), stride=(64, 64)) -> torch.Tensor:
+    """
+    img_tensor: (1, C, H, W)
+    model: 可呼叫模型，輸入為 (B, C, H, W)
+    return: (1, C, H, W) 與原圖等尺寸的推理結果
+    """
+    assert img_tensor.ndim == 4 and img_tensor.size(0) == 1, "請輸入 (1, C, H, W) 的 Tensor"
+    B, C, H, W = img_tensor.shape
+    ph, pw = patch_size
+    sh, sw = stride
+
+    pad_h = (ph - H % ph) % ph
+    pad_w = (pw - W % pw) % pw
+
+    pad_img = torch.nn.functional.pad(img_tensor, (0, pad_w, 0, pad_h), mode="reflect")
+    _, _, H_pad, W_pad = pad_img.shape
+
+    output_mid = torch.zeros_like(pad_img)
+    count_map_mid = torch.zeros_like(pad_img)
+    output_final = torch.zeros_like(pad_img)
+    count_map_final = torch.zeros_like(pad_img)
+
+    # 輸出有兩個，分別是中間輸出與最終輸出
+    # with torch.no_grad():
+    #     for i in range(0, H_pad - ph + 1, sh):
+    #         for j in range(0, W_pad - pw + 1, sw):
+    #             patch = pad_img[:, :, i:i+ph, j:j+pw]
+    #             pred_mid, pred_final = model(patch)  # 假設 output shape 與 input 相同
+    #             pred_mid, pred_final = model(patch)  # 假設 output shape 與 input 相同
+    #             output_mid[:, :, i:i+ph, j:j+pw] += pred_mid
+    #             output_final[:, :, i:i+ph, j:j+pw] += pred_final
+    #             count_map_mid[:, :, i:i+ph, j:j+pw] += 1
+    #             count_map_final[:, :, i:i+ph, j:j+pw] += 1
+
+    # output_mid = output_mid / count_map_mid
+    # output_final = output_final / count_map_final
+    # return output_mid[:, :, :H, :W], output_final[:, :, :H, :W] # 去除 padding
+
+    # 輸出僅有最終輸出
+    with torch.no_grad():
+        for i in range(0, H_pad - ph + 1, sh):
+            for j in range(0, W_pad - pw + 1, sw):
+                patch = pad_img[:, :, i:i+ph, j:j+pw]
+                pred_final = model(patch)  # 假設 output shape 與 input 相同
+                output_final[:, :, i:i+ph, j:j+pw] += pred_final
+                count_map_final[:, :, i:i+ph, j:j+pw] += 1
+
+    output_final = output_final / count_map_final
+    return output_final[:, :, :H, :W] # 去除 padding
     
 
 # 訓練/驗證模組區
@@ -94,15 +147,29 @@ def train_one_epoch(model, dataloader, optimizer, loss_fns, device, config, epoc
         input_img, target_img = input_img.to(device), target_img.to(device)
         optimizer.zero_grad()
 
-        mid_output, final_output = model(input_img)
+        # mid_output, final_output = model(input_img)
+        final_output = model(input_img)
         
-        mid_output_shift = (mid_output + 1) / 3
-        final_output_shift = (final_output + 1) / 3
-        target_img_shift = (target_img + 1) / 3
-        mid_ssim = ssim_loss(mid_output_shift, target_img_shift)
-        final_ssim = ssim_loss(final_output_shift, target_img_shift)
-        ssim_val = (1 - mid_ssim) + (1 - final_ssim)
-        edge_val = edge_loss(mid_output_shift, target_img_shift) + edge_loss(final_output_shift, target_img_shift)
+        # 帶平移縮放的輸出
+        # mid_output_shift = (mid_output + 1) / 3
+        # final_output_shift = (final_output + 1) / 3
+        # target_img_shift = (target_img + 1) / 3
+        # mid_ssim = ssim_loss(mid_output_shift, target_img_shift)
+        # final_ssim = ssim_loss(final_output_shift, target_img_shift)
+        # ssim_val = (1 - mid_ssim) + (1 - final_ssim)
+        # edge_val = edge_loss(mid_output_shift, target_img_shift) + edge_loss(final_output_shift, target_img_shift)
+        
+        # 含中間輸出
+        # mid_ssim = ssim_loss(mid_output, target_img)
+        # final_ssim = ssim_loss(final_output, target_img)
+        # ssim_val = (1 - mid_ssim) + (1 - final_ssim)
+        # edge_val = edge_loss(mid_output, target_img) + edge_loss(final_output, target_img)
+        
+        # 僅最後輸出
+        final_ssim = ssim_loss(final_output, target_img)
+        ssim_val = (1 - final_ssim)
+        edge_val = edge_loss(final_output, target_img)
+        
         
         """
         # mid_output = model(input_img)
@@ -118,13 +185,13 @@ def train_one_epoch(model, dataloader, optimizer, loss_fns, device, config, epoc
             print("⚠ SSIM Loss 出錯", ssim_val, input_img.sum(), target_img.sum())
             print("input img 最大值:", input_img.max().item(), "最小值:", input_img.min().item())
             print("target img 最大值:", target_img.max().item(), "最小值:", target_img.min().item())
-            print("mid output img 最大值:", mid_output.max().item(), "最小值:", mid_output.min().item())
+            # print("mid output img 最大值:", mid_output.max().item(), "最小值:", mid_output.min().item())
 
         if torch.isnan(edge_val) or torch.isinf(edge_val):
             print("⚠ Edge Loss 出錯", edge_val, input_img.sum(), target_img.sum())
             print("input img 最大值:", input_img.max().item(), "最小值:", input_img.min().item())
             print("target img 最大值:", target_img.max().item(), "最小值:", target_img.min().item())
-            print("mid output img 最大值:", mid_output.max().item(), "最小值:", mid_output.min().item())
+            # print("mid output img 最大值:", mid_output.max().item(), "最小值:", mid_output.min().item())
 
         loss = ssim_val + 0.05 * edge_val + 0.2
         loss.backward()
@@ -132,16 +199,16 @@ def train_one_epoch(model, dataloader, optimizer, loss_fns, device, config, epoc
         optimizer.step()
 
         running_loss += loss.item()
-        running_mid_ssim += mid_ssim.item()
+        # running_mid_ssim += mid_ssim.item()
         running_final_ssim += final_ssim.item()
         if batch_idx % config["log_interval"] == 0:
             pbar.set_postfix(loss=loss.item())
             
         if writer is not None and (epoch + 1) % 10 == 0 and batch_idx == 0:
-            log_sample_to_tensorboard(writer, input_img, mid_output, final_output, target_img, epoch,
-                                      prefix=f"Epoch_{epoch+1}_Batch_{batch_idx+1}")
-            # log_sample_to_tensorboard(writer, input_img, mid_output, target_img, epoch,
+            # log_sample_to_tensorboard(writer, input_img, mid_output, final_output, target_img, epoch,
             #                           prefix=f"Epoch_{epoch+1}_Batch_{batch_idx+1}")
+            log_sample_to_tensorboard(writer, input_img, final_output, target_img, epoch,
+                                      prefix=f"Epoch_{epoch+1}_Batch_{batch_idx+1}")
                 
 
     avg_loss = running_loss / len(dataloader)
@@ -164,17 +231,32 @@ def validate_one_epoch(model, dataloader, loss_fns, device, config, epoch, write
             input_img = batch['input']
             target_img = batch['target']
             input_img, target_img = input_img.to(device), target_img.to(device)
-            mid_output, final_output = model(input_img)
+            # mid_output, final_output = model(input_img)
             # mid_output = model(input_img)
+            # mid_output, final_output = sliding_window_inference(input_img, model, patch_size=(128, 128), stride=(64, 64))
+            final_output = sliding_window_inference(input_img, model, patch_size=(128, 128), stride=(64, 64))
             
-            mid_output_shift = (mid_output + 1) / 2
-            target_img_mid_shift = (target_img + 1) / 2
-            final_output_shift = (final_output + 1) / 3
-            target_img_shift = (target_img + 1) / 3
-            mid_ssim_val = ssim_loss(mid_output_shift, target_img_mid_shift)
-            final_ssim_val = ssim_loss(final_output_shift, target_img_shift)
-            ssim_val = (1 - mid_ssim_val) + (1 - final_ssim_val)
-            edge_val = edge_loss(mid_output_shift, target_img_mid_shift) + edge_loss(final_output_shift, target_img_shift)
+            # 平移縮放的輸出
+            # mid_output_shift = (mid_output + 1) / 3
+            # target_img_mid_shift = (target_img + 1) / 3
+            # final_output_shift = (final_output + 1) / 3
+            # target_img_shift = (target_img + 1) / 3
+            # mid_ssim_val = ssim_loss(mid_output_shift, target_img_mid_shift)
+            # final_ssim_val = ssim_loss(final_output_shift, target_img_shift)
+            # ssim_val = (1 - mid_ssim_val) + (1 - final_ssim_val)
+            # edge_val = edge_loss(mid_output_shift, target_img_mid_shift) + edge_loss(final_output_shift, target_img_shift)
+            
+            # 含中間輸出
+            # mid_ssim_val = ssim_loss(mid_output, target_img)
+            # final_ssim_val = ssim_loss(final_output, target_img)
+            # ssim_val = (1 - mid_ssim_val) + (1 - final_ssim_val)
+            # edge_val = edge_loss(mid_output, target_img) + edge_loss(final_output, target_img)
+                        
+            # 僅最後輸出
+            final_ssim_val = ssim_loss(final_output, target_img)
+            ssim_val = (1 - final_ssim_val)
+            edge_val =  edge_loss(final_output, target_img)
+            
             loss = ssim_val + 0.05 * edge_val + 0.2
 
             """
@@ -188,14 +270,14 @@ def validate_one_epoch(model, dataloader, loss_fns, device, config, epoch, write
             """
             
             running_loss += loss.item()
-            running_mid_ssim += mid_ssim_val.item()
+            # running_mid_ssim += mid_ssim_val.item()
             running_final_ssim += final_ssim_val.item()
             
             if writer is not None and (epoch + 1) % 10 == 0 and val_idx == 0:
-                log_sample_to_tensorboard(writer, input_img, mid_output, final_output, target_img, epoch,
-                                          prefix=f"Epoch_{epoch+1}_Batch_{val_idx+1}")
-                # log_sample_to_tensorboard(writer, input_img, mid_output, target_img, epoch,
+                # log_sample_to_tensorboard(writer, input_img, mid_output, final_output, target_img, epoch,
                 #                           prefix=f"Epoch_{epoch+1}_Batch_{val_idx+1}")
+                log_sample_to_tensorboard(writer, input_img, final_output, target_img, epoch,
+                                          prefix=f"Epoch_{epoch+1}_Batch_{val_idx+1}")
 
     avg_loss = running_loss / len(dataloader)
     avg_mid_ssim_val = running_mid_ssim / len(dataloader)
@@ -212,7 +294,7 @@ config = load_config('config.yml')
 os.makedirs(config["checkpoint_dir"], exist_ok=True)
 
 # 創建模型
-model = DPENet()
+model = DPE_Unet()
 model.to(config["device"])
 
 # 創建損失函數
@@ -243,10 +325,19 @@ log_subdir = f"tensorboard_logs_{datetime.datetime.now().strftime('%Y%m%d-%H%M%S
 log_dir = os.path.join(config["checkpoint_dir"], log_subdir)
 writer = SummaryWriter(log_dir=log_dir)
 writer.add_text("Config", str(config))
-# 
 
+# # checkpoint 檔案路徑
+# checkpoint_path = os.path.join(config["checkpoint_dir"], "DPENet_epoch40.pth")  # 例如第 40 epoch 儲存的模型
+# # 讀取 checkpoint 檔案
+# checkpoint = torch.load(checkpoint_path)
+# # 還原模型、優化器、排程器狀態
+# model.load_state_dict(checkpoint['model_state_dict'])
+# optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+# scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+# # 還原 epoch
+# start_epoch = checkpoint['epoch'] + 1  # +1 是為了從下一 epoch 開始繼續
+# for epoch in range(start_epoch, config["epochs"]): #斷點接續使用
 #訓練迴圈
-# for epoch in range(resume_epoch, config["epochs"]): #斷點接續使用
 for epoch in range(config["epochs"]):
     # train_loss, train_mid_ssim = train_one_epoch(
     #     model, train_loader, optimizer, loss_fns, config["device"], config, epoch , writer=writer

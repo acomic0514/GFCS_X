@@ -19,6 +19,17 @@ class LayerNorm(nn.Module):
     def forward(self, input):
         output = F.layer_norm(input, self.weight.shape, self.weight, self.bias, 1e-5)
         return output
+    
+###########################################################################
+# LayerNorm for CNN inputs [B, C, H, W]
+class LayerNorm_CNN(nn.Module):
+    """LayerNorm for CNN inputs [B, C, H, W] using GroupNorm equivalence"""
+    def __init__(self, num_channels: int, bias: bool = True):
+        super().__init__()
+        self.body = nn.GroupNorm(num_groups=1, num_channels=num_channels, affine=bias)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.body(x)
 
 ##########################################################################
 # Dynamic Tanh (DyT)
@@ -44,17 +55,20 @@ class Norm(nn.Module):
     """General LayerNorm wrapper supporting both BiasFree and WithBias variants"""
     def __init__(self, dim: int, norm_type: str = 'WithBias'):
         super().__init__()
-        valid_types = {'WithBias', 'BiasFree', 'DyT'}
+        valid_types = {'WithBias', 'BiasFree', 'WithBiasCNN', 'BiasFreeCNN', 'DyT'}
         if norm_type not in valid_types:
-            raise ValueError("❌ Norm方法請選擇 'WithBias'、'BiasFree' 或 'DyT' 模式")
+            raise ValueError(f"❌ Norm方法請選擇其中之一: {valid_types}")
         
-        self.norm_type = norm_type
         if norm_type == 'BiasFree':
             self.body = LayerNorm(dim, bias=False)
+        elif norm_type == 'WithBias':
+            self.body = LayerNorm(dim, bias=True)
+        elif norm_type == 'BiasFreeCNN':
+            self.body = LayerNorm_CNN(dim, bias=False)
+        elif norm_type == 'WithBiasCNN':
+            self.body = LayerNorm_CNN(dim, bias=True)
         elif norm_type == 'DyT':
             self.body = DynamicTanh(dim)
-        else:
-            self.body = LayerNorm(dim, bias=True)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.body(x)

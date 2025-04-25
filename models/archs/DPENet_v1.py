@@ -33,7 +33,7 @@ class DPENet(nn.Module):
             nn.Conv2d(mid_channels, in_channels, 
                       kernel_size=1, padding=0, bias=bias),
             # nn.ReLU(inplace=False),
-            nn.Tanh(),  # Apply Tanh activation
+            # nn.Tanh(),  # Apply Tanh activation
         )
         
         self.inconv2 = nn.Sequential(
@@ -45,7 +45,7 @@ class DPENet(nn.Module):
             nn.Conv2d(mid_channels, in_channels, 
                       kernel_size=1, padding=0, bias=bias),
             # nn.ReLU(),
-            nn.Tanh(),  # Apply Tanh activation
+            # nn.Tanh(),  # Apply Tanh activation
         )
         
         # Network Modules

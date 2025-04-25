@@ -16,12 +16,31 @@ class DPENet_CFIM(nn.Module):
         super(DPENet_CFIM, self).__init__()
 
         # Initial feature transformation
-        self.inconv1 = nn.Conv2d(in_channels, mid_channels, kernel_size=1, padding=0, bias=bias)
-        self.outconv1 = nn.Conv2d(mid_channels, in_channels, kernel_size=1, padding=0, bias=bias)
-        self.inconv2 = nn.Conv2d(in_channels, mid_channels, kernel_size=1, padding=0, bias=bias)
-        self.outconv2 = nn.Conv2d(mid_channels, in_channels, kernel_size=1, padding=0, bias=bias)
-        self.inconv3 = nn.Conv2d(in_channels, mid_channels, kernel_size=1, padding=0, bias=bias)
-        self.outconv3 = nn.Conv2d(mid_channels, in_channels, kernel_size=1, padding=0, bias=bias)
+        self.inconv1 = nn.Sequential(
+            nn.Conv2d(in_channels, mid_channels, kernel_size=1, padding=0, bias=bias),
+            nn.ReLU(inplace=False),
+        )
+        self.outconv1 = nn.Sequential(
+            nn.Conv2d(mid_channels, in_channels, kernel_size=1, padding=0, bias=bias),
+            nn.Tanh(),  # Apply Tanh activation
+        )
+        
+        self.inconv2 = nn.Sequential(
+            nn.Conv2d(in_channels, mid_channels, kernel_size=1, padding=0, bias=bias),
+            nn.ReLU(),
+        )
+        self.outconv2 = nn.Sequential(
+            nn.Conv2d(mid_channels, in_channels, kernel_size=1, padding=0, bias=bias),
+            nn.Tanh(),  # Apply Tanh activation
+        )
+        self.inconv3 = nn.Sequential(
+            nn.Conv2d(in_channels, mid_channels, kernel_size=1, padding=0, bias=bias),
+            nn.ReLU(),
+        )
+        self.outconv3 = nn.Sequential(
+            nn.Conv2d(mid_channels, in_channels, kernel_size=1, padding=0, bias=bias),
+            nn.Tanh(),  # Apply Tanh activation
+        )
 
         # Network Modules
         self.ddrb1 = nn.Sequential(*[DDRB(mid_channels, mid_channels, kernel, stride, dilation_list, bias) for _ in range(5)])
@@ -41,6 +60,7 @@ class DPENet_CFIM(nn.Module):
         rs1 = self.ddrb1(x)
         x = self.outconv1(rs1)
         x_mid = x + input_  # Residual connection
+        # x_mid = F.tanh(x) + input_  # Residual connection
         
         # Stage 2: Initial Detail Reconstruction
         x = self.inconv2(F.relu(x_mid))
@@ -53,6 +73,7 @@ class DPENet_CFIM(nn.Module):
         x = self.ddrb2(rs2)
         x = self.outconv2(x)
         x_rain_removed = x + x_mid  # Residual connection
+        # x_rain_removed = F.tanh(x) + x_mid  # Residual connection
         
         # Stage 4: Further Detail Reconstruction
         x = self.inconv3(x_rain_removed)
@@ -65,5 +86,6 @@ class DPENet_CFIM(nn.Module):
         x = self.erpab2(dr3)
         x = self.outconv3(x)
         x_final = x + x_rain_removed  # Residual connection
+        # x_final = F.tanh(x) + x_rain_removed  # Residual connection
         
-        return x_final #如果需要輸出除雨中間結果x_rain_removed要再調整
+        return x_rain_removed, x_final #如果需要輸出除雨中間結果x_rain_removed要再調整

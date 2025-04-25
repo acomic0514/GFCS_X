@@ -72,35 +72,35 @@ class MultiDconvHeadTransposedSA(nn.Module):
         3. 計算自注意力
         4. 應用權重到 V 並輸出
         """
+        input_ = x
         _, _, h, w = x.shape
-        with torch.amp.autocast('cuda'):  # ✅ AMP 自動管理精度
         
-            # 計算 Q, K, V
-            qkv = self.qkv_dwconv(self.qkv(x))
-            q, k, v = qkv.chunk(3, dim=1)  # 拆分為 Q, K, V
+        # 計算 Q, K, V
+        qkv = self.qkv_dwconv(self.qkv(x))
+        q, k, v = qkv.chunk(3, dim=1)  # 拆分為 Q, K, V
 
-            # 重新排列形狀以適應多頭注意力
-            q = rearrange(q, 'b (head c) h w -> b head c (h w)', head=self.num_heads)
-            k = rearrange(k, 'b (head c) h w -> b head c (h w)', head=self.num_heads)
-            v = rearrange(v, 'b (head c) h w -> b head c (h w)', head=self.num_heads)
+        # 重新排列形狀以適應多頭注意力
+        q = rearrange(q, 'b (head c) h w -> b head c (h w)', head=self.num_heads)
+        k = rearrange(k, 'b (head c) h w -> b head c (h w)', head=self.num_heads)
+        v = rearrange(v, 'b (head c) h w -> b head c (h w)', head=self.num_heads)
 
-            # 對 Q, K 進行 L2 正規化，防止數值過大
-            q = F.normalize(q, dim=-1)
-            k = F.normalize(k, dim=-1)
+        # 對 Q, K 進行 L2 正規化，防止數值過大
+        q = F.normalize(q, dim=-1)
+        k = F.normalize(k, dim=-1)
 
-            # 計算注意力分數 (使用愛因斯坦求和 `einsum`)
-            attn = (q @ k.transpose(-2, -1)) * self.temperature
-            attn = attn.softmax(dim=-1)  
+        # 計算注意力分數 (使用愛因斯坦求和 `einsum`)
+        attn = (torch.matmul(q, k.transpose(-2, -1))) * self.temperature
+        attn = attn.softmax(dim=-1)  
 
-            # 計算加權輸出
-            out = (attn @ v)
+        # 計算加權輸出
+        out = torch.matmul(attn, v)
 
-            # 恢復輸出形狀
-            out = rearrange(out, 'b head c (h w) -> b (head c) h w', 
-                            head=self.num_heads, h=h, w=w)
+        # 恢復輸出形狀
+        out = rearrange(out, 'b head c (h w) -> b (head c) h w', 
+                        head=self.num_heads, h=h, w=w)
 
-            # 最終輸出
-            out = self.project_out(out)
+        # 最終輸出
+        out = self.project_out(out) + input_  # 殘差連接
         return out
 
 
@@ -141,11 +141,11 @@ class GatedDconvFFN(nn.Module):
         3. `Gating Mechanism` 控制信息流
         4. `1x1 Conv` 降低維度
         """
-        with torch.amp.autocast('cuda'):  # ✅ AMP 自動管理精度
-            x = self.project_in(x)
-            x1, x2 = self.dwconv(x).chunk(2, dim=1)  # 拆分通道
-            x = torch.mul(F.gelu(x1), x2)  # 閘控機制
-            x = self.project_out(x)
+        input_ = x
+        x = self.project_in(x)
+        x1, x2 = self.dwconv(x).chunk(2, dim=1)  # 拆分通道
+        x = torch.mul(F.gelu(x1), x2)  # 閘控機制
+        x = self.project_out(x) + input_  # 殘差連接
         return x
 
 
@@ -153,7 +153,7 @@ class GatedDconvFFN(nn.Module):
 ##########################################################################
 # TransformerBlock
 class TransformerBlock(nn.Module):
-    def __init__(self, dim, num_heads, ffn_expansion_factor, bias, Norm_type, **kwargs):
+    def __init__(self, dim = 32, num_heads = 4, ffn_expansion_factor = 2.66, bias = False, Norm_type = 'WithBiasCNN'):
         super(TransformerBlock, self).__init__()
 
         self.norm1 = norms.Norm(dim, Norm_type)
@@ -162,10 +162,11 @@ class TransformerBlock(nn.Module):
         self.GDFN = GatedDconvFFN(dim, ffn_expansion_factor, bias)
 
     def forward(self, x):
-        _, _, H, W = x.shape
-        with torch.amp.autocast('cuda'):  # ✅ AMP 自動管理精度
-            x = x + self.MDTA(to_4d(self.norm1(to_3d(x)), H, W))
-            x = x + self.GDFN(to_4d(self.norm2(to_3d(x)), H, W))
+        
+        x = self.norm1(x)
+        x = self.MDTA(x)
+        x = self.norm2(x)
+        x = self.GDFN(x)
 
         return x
     
@@ -478,20 +479,19 @@ class DegradationAwareMoE(nn.Module):
     def forward(self, x):
         b, _, _, _ = x.shape
         
-        with torch.amp.autocast('cuda'):  # ✅ AMP 自動管理精度
-            # 通道平均池化計算 z_c
-            z_c = x.mean(dim=[2, 3])  # (B, C)
-            
-            # 使用 W1, W2 計算專家權重
-            weights = self.W2(F.relu(self.W1(z_c)))  # (B, num_experts)
-            weights = torch.softmax(weights, dim=1)  
-            
-            # 計算專家輸出
-            expert_outputs = torch.stack([expert(x) for expert in self.experts], dim=1)  # (B, num_experts, C, H, W)
-            mixture = torch.sum(weights.view(b, -1, 1, 1, 1) * expert_outputs, dim=1)  # (B, C, H, W)
-            
-            # 1×1 卷積處理後再加上殘差連接
-            output = self.final_conv(mixture) + x
+        # 通道平均池化計算 z_c
+        z_c = x.mean(dim=[2, 3])  # (B, C)
+        
+        # 使用 W1, W2 計算專家權重
+        weights = self.W2(F.relu(self.W1(z_c)))  # (B, num_experts)
+        weights = torch.softmax(weights, dim=1)  
+        
+        # 計算專家輸出
+        expert_outputs = torch.stack([expert(x) for expert in self.experts], dim=1)  # (B, num_experts, C, H, W)
+        mixture = torch.sum(weights.view(b, -1, 1, 1, 1) * expert_outputs, dim=1)  # (B, C, H, W)
+        
+        # 1×1 卷積處理後再加上殘差連接
+        output = self.final_conv(mixture) + x
         return output
 
 """Token statistics transformer: linear-time attention via variational rate reduction"""
@@ -654,9 +654,20 @@ class ERPAB(nn.Module):
             nn.Conv2d(in_channels, mid_channels, kernel, stride, 
                       padding=d[2], dilation=d[2], bias=bias),  # C32D5
         ])
+
+        # self.experts = nn.ModuleList([
+        # nn.AvgPool2d(3, stride=1, padding=1),  # 3×3 pooling
+        # nn.Conv2d(in_channels, mid_channels, 1, stride, bias=bias),  # 1×1 conv
+        # nn.Conv2d(in_channels, mid_channels, 3, stride, padding=1, bias=bias),  # 3×3 conv
+        # nn.Conv2d(in_channels, mid_channels, 5, stride, padding=2, bias=bias),  # 5×5 conv
+        # nn.Conv2d(in_channels, mid_channels, 7, stride, padding=3, bias=bias),  # 7×7 conv
+        # nn.Conv2d(in_channels, mid_channels, 3, stride, padding=3, dilation=3, bias=bias),  # 3×3 dilated
+        # nn.Conv2d(in_channels, mid_channels, 5, stride, padding=6, dilation=3, bias=bias),  # 5×5 dilated
+        # nn.Conv2d(in_channels, mid_channels, 7, stride, padding=9, dilation=3, bias=bias)   # 7×7 dilated
+        # ])
         
         self.conv1 = nn.Sequential(
-            nn.Conv2d(mid_channels * 3, in_channels, kernel_size=1, stride=stride, padding=0, bias=True),
+            nn.Conv2d(mid_channels * 8, in_channels, kernel_size=1, stride=stride, padding=0, bias=True),
             nn.ReLU(inplace=False)
         )
 
@@ -696,7 +707,7 @@ class CFIM(nn.Module):
     Usage:
         self.cfim = CFIM(in_channels=32, norm_type = 'DyT' or 'WithBias' or 'BiasFree')
     """
-    def __init__(self, in_channels, norm_type='DyT'):
+    def __init__(self, in_channels, norm_type='WithBiasCNN'):
         super(CFIM, self).__init__()
         self.norm1 = norms.Norm(in_channels, norm_type)
         self.norm2 = norms.Norm(in_channels, norm_type)
@@ -716,16 +727,31 @@ class CFIM(nn.Module):
         Usage:
             to_rs_net, to_dr_net = CFIM(r_net, dr_net)
         """     
-        with torch.cuda.amp.autocast():
-            rs1 = self.rsconv1(self.norm1(r_net))
-            dr1 = self.drconv1(self.norm2(dr_net))
-            A = torch.matmul(rs1, dr1)
-            rs2 = self.rsconv2(rs1)
-            dr2 = self.drconv2(dr1)
-            rs_side = torch.matmul(A, rs2)
-            dr_side = torch.matmul(A, dr2)
-            to_rs_net = dr_side + r_net
-            to_dr_net = rs_side + dr_net
+        B, C, H, W = r_net.shape
+        N = H * W # Flattened spatial dimension
+        
+        rs1 = self.rsconv1(self.norm1(r_net))  # (B, C, H, W)
+        dr1 = self.drconv1(self.norm2(dr_net)) # (B, C, H, W)
+        
+        # flatten to (B, C, N)
+        rs1_flat = rs1.view(B, C, N)
+        dr1_flat = dr1.view(B, C, N)
+        
+        # attention map A: (B, C, C)
+        A = torch.matmul(rs1_flat, dr1_flat.transpose(1, 2)) # (B, C, C)
+        # A = torch.matmul(rs1, dr1)
+        
+        # second convs
+        rs2_flat = self.rsconv2(r_net).view(B, C, N)  
+        dr2_flat = self.drconv2(dr_net).view(B, C, N) 
+        
+        # apply mutual attention
+        rs_side = torch.matmul(A, rs2_flat).view(B, C, H, W)
+        dr_side = torch.matmul(A, dr2_flat).view(B, C, H, W)
+        
+        # residual update
+        to_rs_net = dr_side + r_net
+        to_dr_net = rs_side + dr_net
 
         return to_rs_net, to_dr_net
 
